@@ -32,13 +32,19 @@
 
 ## 从 GitHub 安装
 
-1. 打开本仓库的 **Releases** 页面，选择最新版本。
+1. 打开本仓库的 [Releases](https://github.com/TaoZang/EInkLauncher/releases) 页面，选择最新版本。
 2. 下载名称形如 `EInkLauncher-vX.Y.Z.apk` 的文件。
 3. 如系统拦截安装，请仅为当前浏览器或文件管理器开启“允许安装未知应用”。
 4. 安装完成后，按照上面的步骤将它设置为默认桌面。
 5. 可使用同一 Release 中的 `.sha256` 文件核对下载内容。
 
 GitHub Release 中的 APK 使用项目固定的 release 证书签名，因此后续版本可以保留数据并覆盖安装。请只从本仓库的 Releases 页面下载安装包。
+
+发布证书 SHA-256 指纹：
+
+```text
+EE:85:12:A4:5E:19:BE:9F:15:61:68:4C:02:70:F2:BA:1F:53:02:31:BF:CD:C9:99:3C:5A:9A:03:F7:78:D3:D6
+```
 
 ## 兼容范围
 
