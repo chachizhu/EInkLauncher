@@ -733,7 +733,6 @@ class MainActivity : Activity() {
         window.statusBarColor = Color.WHITE
         window.navigationBarColor = Color.WHITE
         window.attributes = window.attributes.apply { windowAnimations = 0 }
-        hideSystemStatusBar()
     }
 
     @Suppress("DEPRECATION")
