@@ -1,0 +1,179 @@
+name: Android CI
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Test and build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Android SDK components
+        shell: bash
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Test and assemble APK
+        shell: bash
+        run: |
+          tasks=(lintDebug testDebugUnitTest assembleDebug)
+          gradle_args=(--no-daemon)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tasks+=(assembleRelease)
+            gradle_args+=(
+              "-PversionName=${GITHUB_REF_NAME#v}"
+              "-PversionCode=${GITHUB_RUN_NUMBER}"
+            )
+          fi
+          ./gradlew "${gradle_args[@]}" "${tasks[@]}"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: eink-launcher-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Sign tagged release APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_secrets=(
+            ANDROID_KEYSTORE_BASE64
+            ANDROID_KEYSTORE_PASSWORD
+            ANDROID_KEY_ALIAS
+            ANDROID_KEY_PASSWORD
+          )
+          missing_secrets=()
+          for secret_name in "${required_secrets[@]}"; do
+            if [[ -z "${!secret_name:-}" ]]; then
+              missing_secrets+=("$secret_name")
+            fi
+          done
+          if (( ${#missing_secrets[@]} > 0 )); then
+            printf 'Tag release aborted. Missing GitHub Actions secrets:\n' >&2
+            printf '  - %s\n' "${missing_secrets[@]}" >&2
+            exit 1
+          fi
+
+          unsigned_apk="app/build/outputs/apk/release/app-release-unsigned.apk"
+          if [[ ! -f "$unsigned_apk" ]]; then
+            printf 'Unsigned release APK was not produced at %s\n' "$unsigned_apk" >&2
+            exit 1
+          fi
+
+          apksigner_path="$(find "${ANDROID_HOME:?}/build-tools" -maxdepth 2 -type f -name apksigner -print | sort -V | tail -n 1)"
+          if [[ -z "$apksigner_path" || ! -x "$apksigner_path" ]]; then
+            printf 'Android SDK apksigner was not found.\n' >&2
+            exit 1
+          fi
+          zipalign_path="$(dirname "$apksigner_path")/zipalign"
+          if [[ ! -x "$zipalign_path" ]]; then
+            printf 'Android SDK zipalign was not found next to apksigner.\n' >&2
+            exit 1
+          fi
+
+          signing_dir="${RUNNER_TEMP:?}/eink-launcher-signing"
+          mkdir -p "$signing_dir" signed
+          keystore_path="$signing_dir/release.keystore"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          if [[ ! -s "$keystore_path" ]]; then
+            printf 'Decoded keystore is empty. Check ANDROID_KEYSTORE_BASE64.\n' >&2
+            exit 1
+          fi
+
+          release_name="${GITHUB_REF_NAME//\//-}"
+          signed_apk="signed/EInkLauncher-${release_name}.apk"
+          aligned_apk="$signing_dir/aligned-release.apk"
+          "$zipalign_path" -p -f 4 "$unsigned_apk" "$aligned_apk"
+          "$apksigner_path" sign \
+            --ks "$keystore_path" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --key-pass env:ANDROID_KEY_PASSWORD \
+            --out "$signed_apk" \
+            "$aligned_apk"
+          "$zipalign_path" -c -v 4 "$signed_apk"
+          "$apksigner_path" verify --verbose --print-certs "$signed_apk"
+
+      - name: Upload signed release APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: eink-launcher-release
+          path: signed/*.apk
+          if-no-files-found: error
+
+  release:
+    name: Publish signed release APK
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download signed release APK
+        uses: actions/download-artifact@v4
+        with:
+          name: eink-launcher-release
+          path: dist
+
+      - name: Create checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_name="${GITHUB_REF_NAME//\//-}"
+          apk_name="EInkLauncher-${release_name}.apk"
+          if [[ ! -f "dist/$apk_name" ]]; then
+            printf 'Signed release APK was not downloaded at dist/%s\n' "$apk_name" >&2
+            exit 1
+          fi
+          cd dist
+          sha256sum "$apk_name" > "$apk_name.sha256"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "E-Ink Launcher $GITHUB_REF_NAME" \
+              --generate-notes \
+              --notes "此 APK 已使用项目固定的 release 证书签名，可在保留应用数据的情况下覆盖升级。SHA-256 校验文件与 APK 一并提供。"
+          fi

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">墨水桌面</string>
+    <string name="time_battery_format">%1$s   %2$s</string>
+    <string name="battery_percentage">%1$d%%</string>
+    <string name="battery_charging">%1$d%%+</string>
+    <string name="battery_unknown">--%</string>
+    <string name="status_summary">时间 %1$s，电量 %2$s。长按可管理应用。</string>
+
+    <string name="no_apps_title">尚未选择应用</string>
+    <string name="add_apps">添加应用</string>
+    <string name="manage_apps_title">管理应用</string>
+    <string name="done">完成</string>
+    <string name="selected_apps">已选择</string>
+    <string name="available_apps">可用应用</string>
+    <string name="previous_page">上一页</string>
+    <string name="next_page">下一页</string>
+    <string name="move_up">上移</string>
+    <string name="move_down">下移</string>
+    <string name="remove">移除</string>
+    <string name="add">添加</string>
+    <string name="unable_to_open_app">无法打开此应用。</string>
+    <string name="app_unavailable">此应用当前不可用。</string>
+    <string name="page_indicator">第 %1$d 页，共 %2$d 页</string>
+    <string name="selected_count">已选择 %1$d/8</string>
+    <string name="move_app_up">上移 %1$s</string>
+    <string name="move_app_down">下移 %1$s</string>
+    <string name="remove_app">移除 %1$s</string>
+    <string name="add_app">添加 %1$s</string>
+
+    <string name="default_launcher_explanation">将墨水桌面设为默认桌面后，设备启动或按下主页键时会回到这里。</string>
+    <string name="choose_default_launcher">选择默认桌面</string>
+    <string name="default_launcher_already_set">墨水桌面已经是默认桌面。</string>
+    <string name="first_run_hint">请选择最多 8 个应用。以后长按主屏空白处或右上角时间与电量即可修改。</string>
+    <string name="default_role_unavailable">请在系统的默认桌面设置中选择墨水桌面。</string>
+</resources>

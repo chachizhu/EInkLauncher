@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="BaseThemeEInkLauncher" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@color/paper_white</item>
+        <item name="android:colorAccent">@color/ink_black</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">@color/paper_white</item>
+        <item name="android:navigationBarColor">@color/paper_white</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowContentTransitions">false</item>
+        <item name="android:windowActivityTransitions">false</item>
+        <item name="android:windowAnimationStyle">@style/Animation.EInkLauncher.None</item>
+    </style>
+
+    <style name="Theme.EInkLauncher" parent="@style/BaseThemeEInkLauncher" />
+
+    <style name="Animation.EInkLauncher.None" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/no_animation</item>
+        <item name="android:activityOpenExitAnimation">@anim/no_animation</item>
+        <item name="android:activityCloseEnterAnimation">@anim/no_animation</item>
+        <item name="android:activityCloseExitAnimation">@anim/no_animation</item>
+        <item name="android:taskOpenEnterAnimation">@anim/no_animation</item>
+        <item name="android:taskOpenExitAnimation">@anim/no_animation</item>
+        <item name="android:taskCloseEnterAnimation">@anim/no_animation</item>
+        <item name="android:taskCloseExitAnimation">@anim/no_animation</item>
+        <item name="android:taskToFrontEnterAnimation">@anim/no_animation</item>
+        <item name="android:taskToFrontExitAnimation">@anim/no_animation</item>
+        <item name="android:taskToBackEnterAnimation">@anim/no_animation</item>
+        <item name="android:taskToBackExitAnimation">@anim/no_animation</item>
+    </style>
+</resources>
