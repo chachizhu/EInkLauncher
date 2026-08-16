@@ -1,5 +1,6 @@
 package com.sousoulab.einklauncher
 
+import android.os.Build
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
@@ -91,7 +92,12 @@ internal class GitHubReleaseClient : UpdateClient {
                 accept = "application/octet-stream",
             ) { connection ->
                 requireSuccess(connection)
-                responseSizeBytes = connection.contentLengthLong
+                responseSizeBytes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    connection.contentLengthLong
+                } else {
+                    @Suppress("DEPRECATION")
+                    connection.contentLength.toLong()
+                }
                 if (responseSizeBytes > UpdatePolicy.MAX_APK_BYTES) {
                     throw UpdateException("Release APK exceeds the size limit")
                 }

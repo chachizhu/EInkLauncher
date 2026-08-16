@@ -6,6 +6,7 @@ import org.junit.Test
 class HomeTextSizePolicyTest {
     @Test
     fun `normalize keeps sizes inside the supported range`() {
+        assertEquals(50, HomeTextSizePolicy.MAX_SP)
         assertEquals(HomeTextSizePolicy.MIN_SP, HomeTextSizePolicy.normalize(Int.MIN_VALUE))
         assertEquals(24, HomeTextSizePolicy.normalize(24))
         assertEquals(HomeTextSizePolicy.MAX_SP, HomeTextSizePolicy.normalize(Int.MAX_VALUE))
@@ -21,7 +22,7 @@ class HomeTextSizePolicyTest {
     @Test
     fun `increase uses the configured step and clamps at the maximum`() {
         assertEquals(25, HomeTextSizePolicy.increase(HomeTextSizePolicy.DEFAULT_SP))
-        assertEquals(HomeTextSizePolicy.MAX_SP, HomeTextSizePolicy.increase(29))
+        assertEquals(HomeTextSizePolicy.MAX_SP, HomeTextSizePolicy.increase(49))
         assertEquals(HomeTextSizePolicy.MAX_SP, HomeTextSizePolicy.increase(Int.MAX_VALUE))
     }
 }

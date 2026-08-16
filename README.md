@@ -61,7 +61,7 @@ EE:85:12:A4:5E:19:BE:9F:15:61:68:4C:02:70:F2:BA:1F:53:02:31:BF:CD:C9:99:3C:5A:9A
 
 ## 兼容范围
 
-- 最低系统版本：Android 8.0（API 26）
+- 最低系统版本：Android 5.0（API 21）
 - 目标系统版本：Android 13（API 33）
 - 编译 SDK：Android API 35
 

@@ -1,10 +1,10 @@
 package com.sousoulab.einklauncher
 
-/** Bounded text sizes keep all eight launcher rows usable on compact e-reader screens. */
+/** Bounds the persisted home app text size. */
 internal object HomeTextSizePolicy {
     const val MIN_SP = 19
     const val DEFAULT_SP = 23
-    const val MAX_SP = 29
+    const val MAX_SP = 50
 
     private const val STEP_SP = 2
 

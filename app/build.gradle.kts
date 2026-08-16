@@ -18,7 +18,7 @@ android {
 
     defaultConfig {
         applicationId = "com.sousoulab.einklauncher"
-        minSdk = 26
+        minSdk = 21
         targetSdk = 33
         versionCode = configuredVersionCode
         versionName = configuredVersionName

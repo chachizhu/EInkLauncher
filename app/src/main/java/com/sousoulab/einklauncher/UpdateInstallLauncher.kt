@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import java.io.File
@@ -15,12 +16,18 @@ internal class SystemUpdateInstaller(context: Context) {
     private val packageManager = appContext.packageManager
     private val updateDirectory = File(appContext.cacheDir, UPDATE_DIRECTORY_NAME)
 
-    fun canRequestInstall(): Boolean = packageManager.canRequestPackageInstalls()
+    fun canRequestInstall(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()
 
-    fun permissionIntent(): Intent = Intent(
-        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-        Uri.parse("package:${appContext.packageName}"),
-    ).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+    fun permissionIntent(): Intent =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${appContext.packageName}"),
+            ).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        } else {
+            Intent(Settings.ACTION_SECURITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        }
 
     @Throws(UpdateException::class)
     fun installIntent(file: File): Intent {
