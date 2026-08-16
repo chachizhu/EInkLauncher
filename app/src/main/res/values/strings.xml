@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">E-Ink Launcher</string>
-    <string name="time_battery_format">%1$s   %2$s</string>
+    <string name="time_battery_format">"%1$s   %2$s"</string>
     <string name="battery_percentage">%1$d%%</string>
     <string name="battery_charging">%1$d%%+</string>
     <string name="battery_unknown">--%</string>
@@ -12,6 +12,10 @@
     <string name="manage_apps_title">Manage apps</string>
     <string name="done">Done</string>
     <string name="selected_apps">Selected</string>
+    <string name="home_app_text_size">Home app text size</string>
+    <string name="decrease_text_size">Smaller</string>
+    <string name="increase_text_size">Larger</string>
+    <string name="home_text_size_value">Current: %1$d sp</string>
     <string name="available_apps">Available apps</string>
     <string name="previous_page">Previous</string>
     <string name="next_page">Next</string>
@@ -27,6 +31,22 @@
     <string name="move_app_down">Move %1$s down</string>
     <string name="remove_app">Remove %1$s</string>
     <string name="add_app">Add %1$s</string>
+
+    <string name="updates_title">Updates</string>
+    <string name="current_version">Installed version: %1$s</string>
+    <string name="check_for_updates">Check for updates</string>
+    <string name="checking_for_updates">Checking GitHub Releases…</string>
+    <string name="up_to_date">You are using the latest version.</string>
+    <string name="update_available">Version %1$s is available.</string>
+    <string name="download_update">Download and verify</string>
+    <string name="downloading_update">Downloading and verifying…</string>
+    <string name="update_ready">Version %1$s is verified and ready to install.</string>
+    <string name="install_update">Install update</string>
+    <string name="allow_update_installs">Allow E-Ink Launcher to install updates in system settings. Then return and tap Install update again.</string>
+    <string name="update_check_failed">Could not check for updates. Please try again.</string>
+    <string name="update_download_failed">Download or verification failed. Please try again.</string>
+    <string name="installer_unavailable">The system package installer is unavailable.</string>
+    <string name="update_file_unavailable">The downloaded update is no longer available. Check again.</string>
 
     <string name="default_launcher_explanation">Set E-Ink Launcher as the default Home app to use it when the device starts or when you press Home.</string>
     <string name="choose_default_launcher">Choose default Home app</string>

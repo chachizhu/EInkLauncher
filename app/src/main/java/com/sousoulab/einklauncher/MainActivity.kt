@@ -1,5 +1,6 @@
 package com.sousoulab.einklauncher
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.ActivityOptions
 import android.app.role.RoleManager
@@ -24,20 +25,28 @@ import android.util.StateSet
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import java.io.File
 import java.util.Date
 
 class MainActivity : Activity() {
     private lateinit var preferences: LauncherPreferences
     private lateinit var appsRepository: LaunchableAppsRepository
+    private lateinit var updateVerifier: UpdatePackageVerifier
+    private lateinit var updateInstaller: SystemUpdateInstaller
+
+    internal var updateClientFactory: () -> UpdateClient = { GitHubReleaseClient() }
 
     private var currentScreen = Screen.HOME
     private var firstRunManagement = false
@@ -53,6 +62,10 @@ class MainActivity : Activity() {
     private var previousPageButton: Button? = null
     private var nextPageButton: Button? = null
     private var defaultLauncherContainer: LinearLayout? = null
+    private var homeTextSizeValueView: TextView? = null
+    private var decreaseHomeTextSizeButton: Button? = null
+    private var increaseHomeTextSizeButton: Button? = null
+    private var updateContainer: LinearLayout? = null
     private var homeRoot: FrameLayout? = null
     private var homeErrorView: View? = null
     private var defaultLauncherErrorVisible = false
@@ -60,6 +73,15 @@ class MainActivity : Activity() {
     private var currentTime = ""
     private var currentBattery = ""
     private var statusReceiverRegistered = false
+
+    private var installedVersionName = "?"
+    private var updateState = UpdateState.IDLE
+    private var availableUpdate: UpdateRelease? = null
+    private var verifiedUpdate: VerifiedUpdate? = null
+    private var activeUpdateClient: UpdateClient? = null
+    private var activeUpdateThread: Thread? = null
+    private var updateGeneration = 0L
+    private var waitingForInstallPermission = false
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -78,6 +100,13 @@ class MainActivity : Activity() {
         configureWindow()
         preferences = LauncherPreferences(this)
         appsRepository = LaunchableAppsRepository(this)
+        updateVerifier = UpdatePackageVerifier(this)
+        updateInstaller = SystemUpdateInstaller(this)
+        installedVersionName = try {
+            updateVerifier.currentVersionName()
+        } catch (_: UpdateException) {
+            "?"
+        }
 
         if (preferences.isFirstRun()) {
             showManagement(isFirstRun = true)
@@ -105,12 +134,27 @@ class MainActivity : Activity() {
                 renderAvailableApps()
             }
         }
+        if (waitingForInstallPermission && currentScreen == Screen.MANAGEMENT) {
+            waitingForInstallPermission = false
+            updateState = if (updateInstaller.canRequestInstall()) {
+                UpdateState.READY
+            } else {
+                UpdateState.INSTALL_PERMISSION_REQUIRED
+            }
+            renderUpdateSection()
+        }
     }
 
     override fun onStop() {
+        cancelActiveUpdateTask(restoreIdleState = true)
         refreshScreenWhenResumed = true
         unregisterStatusReceiver()
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        cancelActiveUpdateTask(restoreIdleState = false)
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -159,6 +203,7 @@ class MainActivity : Activity() {
     }
 
     private fun showHome() {
+        resetUpdateSession()
         currentScreen = Screen.HOME
         firstRunManagement = false
         clearManagementReferences()
@@ -166,9 +211,8 @@ class MainActivity : Activity() {
         val root = createBaseScreen()
         homeRoot = root
         homeErrorView = null
-        root.setOnLongClickListener {
+        installDelayedLongPress(root) {
             showManagement(isFirstRun = false)
-            true
         }
 
         val selectedApps = appsRepository.loadApps(preferences.selectedComponents())
@@ -180,7 +224,7 @@ class MainActivity : Activity() {
 
         if (selectedApps.isEmpty()) {
             appList.addView(
-                plainText(getString(R.string.no_apps_title), HOME_TEXT_SIZE_SP).apply {
+                plainText(getString(R.string.no_apps_title), HOME_EMPTY_TEXT_SIZE_SP).apply {
                     setPadding(dp(12), dp(8), dp(12), dp(8))
                 },
                 linearWrapParams(),
@@ -220,6 +264,7 @@ class MainActivity : Activity() {
     private fun showManagement(isFirstRun: Boolean) {
         if (currentScreen == Screen.MANAGEMENT && !isFirstRun) return
 
+        resetUpdateSession()
         currentScreen = Screen.MANAGEMENT
         firstRunManagement = isFirstRun
         homeRoot = null
@@ -283,6 +328,37 @@ class MainActivity : Activity() {
         content.addView(defaultLauncherContainer, linearMatchWrapParams())
 
         content.addView(verticalSpace(20))
+        content.addView(sectionHeading(getString(R.string.home_app_text_size)), linearMatchWrapParams())
+        content.addView(verticalSpace(6))
+        val textSizeControls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(ACTION_HEIGHT_DP)
+        }
+        decreaseHomeTextSizeButton = actionButton(getString(R.string.decrease_text_size)) {
+            updateHomeTextSize(HomeTextSizePolicy::decrease)
+        }
+        homeTextSizeValueView = plainText("", BODY_TEXT_SIZE_SP).apply {
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        increaseHomeTextSizeButton = actionButton(getString(R.string.increase_text_size)) {
+            updateHomeTextSize(HomeTextSizePolicy::increase)
+        }
+        textSizeControls.addView(decreaseHomeTextSizeButton, compactButtonParams())
+        textSizeControls.addView(
+            homeTextSizeValueView,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(8)
+                marginEnd = dp(8)
+            },
+        )
+        textSizeControls.addView(increaseHomeTextSizeButton, compactButtonParams())
+        content.addView(textSizeControls, linearMatchWrapParams())
+        renderHomeTextSizeSetting()
+
+        content.addView(verticalSpace(20))
         val selectedHeading = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -337,6 +413,16 @@ class MainActivity : Activity() {
         )
         pagination.addView(nextPageButton, linearWrapParams())
         content.addView(pagination, linearMatchWrapParams())
+
+        content.addView(verticalSpace(20))
+        content.addView(sectionHeading(getString(R.string.updates_title)), linearMatchWrapParams())
+        content.addView(verticalSpace(6))
+        updateContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.START
+        }
+        content.addView(updateContainer, linearMatchWrapParams())
+        renderUpdateSection()
 
         root.addView(
             scrollView,
@@ -490,8 +576,288 @@ class MainActivity : Activity() {
         renderAvailableApps()
     }
 
+    private fun updateHomeTextSize(transform: (Int) -> Int) {
+        val oldSizeSp = preferences.homeAppTextSizeSp()
+        val newSizeSp = transform(oldSizeSp)
+        if (newSizeSp == oldSizeSp) return
+        preferences.saveHomeAppTextSizeSp(newSizeSp)
+        renderHomeTextSizeSetting()
+    }
+
+    private fun renderHomeTextSizeSetting() {
+        val sizeSp = preferences.homeAppTextSizeSp()
+        homeTextSizeValueView?.text = getString(R.string.home_text_size_value, sizeSp)
+        decreaseHomeTextSizeButton?.isEnabled = sizeSp > HomeTextSizePolicy.MIN_SP
+        increaseHomeTextSizeButton?.isEnabled = sizeSp < HomeTextSizePolicy.MAX_SP
+    }
+
+    private fun renderUpdateSection() {
+        val container = updateContainer ?: return
+        container.removeAllViews()
+        container.addView(
+            plainText(getString(R.string.current_version, installedVersionName), SMALL_TEXT_SIZE_SP),
+            linearMatchWrapParams(),
+        )
+
+        val status = when (updateState) {
+            UpdateState.IDLE -> null
+            UpdateState.CHECKING -> getString(R.string.checking_for_updates)
+            UpdateState.UP_TO_DATE -> getString(R.string.up_to_date)
+            UpdateState.AVAILABLE -> getString(
+                R.string.update_available,
+                availableUpdate?.versionName.orEmpty(),
+            )
+            UpdateState.DOWNLOADING -> getString(R.string.downloading_update)
+            UpdateState.READY -> getString(
+                R.string.update_ready,
+                verifiedUpdate?.release?.versionName.orEmpty(),
+            )
+            UpdateState.INSTALL_PERMISSION_REQUIRED -> getString(R.string.allow_update_installs)
+            UpdateState.CHECK_FAILED -> getString(R.string.update_check_failed)
+            UpdateState.DOWNLOAD_FAILED -> getString(R.string.update_download_failed)
+            UpdateState.INSTALL_FAILED -> getString(R.string.installer_unavailable)
+            UpdateState.FILE_UNAVAILABLE -> getString(R.string.update_file_unavailable)
+        }
+        status?.let {
+            container.addView(verticalSpace(6))
+            container.addView(
+                plainText(it, SMALL_TEXT_SIZE_SP).apply { setLineSpacing(0f, 1.15f) },
+                linearMatchWrapParams(),
+            )
+        }
+
+        container.addView(verticalSpace(8))
+        val action = when (updateState) {
+            UpdateState.AVAILABLE,
+            UpdateState.DOWNLOAD_FAILED,
+            -> getString(R.string.download_update) to ::downloadUpdate
+
+            UpdateState.READY,
+            UpdateState.INSTALL_PERMISSION_REQUIRED,
+            UpdateState.INSTALL_FAILED,
+            -> getString(R.string.install_update) to ::installVerifiedUpdate
+
+            UpdateState.CHECKING -> getString(R.string.checking_for_updates) to {}
+            UpdateState.DOWNLOADING -> getString(R.string.downloading_update) to {}
+            else -> getString(R.string.check_for_updates) to ::checkForUpdates
+        }
+        container.addView(
+            actionButton(action.first, action.second).apply {
+                isEnabled = activeUpdateThread == null &&
+                    updateState != UpdateState.CHECKING &&
+                    updateState != UpdateState.DOWNLOADING
+            },
+            linearWrapParams(),
+        )
+    }
+
+    private fun checkForUpdates() {
+        if (activeUpdateThread != null) return
+        availableUpdate = null
+        verifiedUpdate = null
+        val client = newUpdateClientOrShowFailure(UpdateState.CHECK_FAILED) ?: return
+        startUpdateTask(
+            busyState = UpdateState.CHECKING,
+            client = client,
+            work = {
+                val currentVersion = updateVerifier.currentVersionName()
+                if (UpdatePolicy.normalizedVersion(currentVersion) != currentVersion) {
+                    throw UpdateException("Installed version name is not semantic")
+                }
+                currentVersion to client.latestRelease()
+            },
+        ) { result ->
+            result.fold(
+                onSuccess = { (currentVersion, release) ->
+                    installedVersionName = currentVersion
+                    if (UpdatePolicy.isNewer(release.versionName, currentVersion)) {
+                        availableUpdate = release
+                        updateState = UpdateState.AVAILABLE
+                    } else {
+                        updateState = UpdateState.UP_TO_DATE
+                    }
+                },
+                onFailure = {
+                    updateState = UpdateState.CHECK_FAILED
+                },
+            )
+            renderUpdateSection()
+        }
+    }
+
+    private fun downloadUpdate() {
+        if (activeUpdateThread != null) return
+        val release = availableUpdate ?: run {
+            updateState = UpdateState.FILE_UNAVAILABLE
+            renderUpdateSection()
+            return
+        }
+        verifiedUpdate = null
+        val client = newUpdateClientOrShowFailure(UpdateState.DOWNLOAD_FAILED) ?: return
+        startUpdateTask(
+            busyState = UpdateState.DOWNLOADING,
+            client = client,
+            work = {
+                var downloadedFile: File? = null
+                try {
+                    downloadedFile = client.download(release, File(cacheDir, UPDATE_CACHE_DIRECTORY))
+                    updateVerifier.verify(downloadedFile, release)
+                } catch (error: Exception) {
+                    downloadedFile?.delete()
+                    throw error
+                }
+            },
+        ) { result ->
+            result.fold(
+                onSuccess = { verified ->
+                    verifiedUpdate = verified
+                    updateState = UpdateState.READY
+                },
+                onFailure = {
+                    updateState = UpdateState.DOWNLOAD_FAILED
+                },
+            )
+            renderUpdateSection()
+        }
+    }
+
+    private fun installVerifiedUpdate() {
+        val verified = verifiedUpdate ?: run {
+            updateState = UpdateState.FILE_UNAVAILABLE
+            renderUpdateSection()
+            return
+        }
+        try {
+            updateVerifier.verify(verified.file, verified.release)
+        } catch (_: UpdateException) {
+            verified.file.delete()
+            verifiedUpdate = null
+            updateState = UpdateState.FILE_UNAVAILABLE
+            renderUpdateSection()
+            return
+        }
+
+        if (!updateInstaller.canRequestInstall()) {
+            waitingForInstallPermission = true
+            updateState = UpdateState.INSTALL_PERMISSION_REQUIRED
+            renderUpdateSection()
+            try {
+                startActivityWithoutAnimation(updateInstaller.permissionIntent())
+            } catch (_: ActivityNotFoundException) {
+                waitingForInstallPermission = false
+                updateState = UpdateState.INSTALL_FAILED
+                renderUpdateSection()
+            } catch (_: SecurityException) {
+                waitingForInstallPermission = false
+                updateState = UpdateState.INSTALL_FAILED
+                renderUpdateSection()
+            }
+            return
+        }
+
+        try {
+            startActivityWithoutAnimation(updateInstaller.installIntent(verified.file))
+        } catch (_: ActivityNotFoundException) {
+            updateState = UpdateState.INSTALL_FAILED
+            renderUpdateSection()
+        } catch (_: SecurityException) {
+            updateState = UpdateState.INSTALL_FAILED
+            renderUpdateSection()
+        } catch (_: UpdateException) {
+            updateState = UpdateState.INSTALL_FAILED
+            renderUpdateSection()
+        }
+    }
+
+    private fun startActivityWithoutAnimation(intent: Intent) {
+        val options = ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle()
+        startActivity(intent, options)
+        @Suppress("DEPRECATION")
+        overridePendingTransition(0, 0)
+    }
+
+    private fun newUpdateClientOrShowFailure(failureState: UpdateState): UpdateClient? = try {
+        updateClientFactory()
+    } catch (_: Exception) {
+        updateState = failureState
+        renderUpdateSection()
+        null
+    }
+
+    private fun <T> startUpdateTask(
+        busyState: UpdateState,
+        client: UpdateClient,
+        work: () -> T,
+        onComplete: (Result<T>) -> Unit,
+    ) {
+        cancelActiveUpdateTask(restoreIdleState = false)
+        updateState = busyState
+        renderUpdateSection()
+        val generation = ++updateGeneration
+        activeUpdateClient = client
+        val worker = Thread(
+            {
+                val result = try {
+                    Result.success(work())
+                } catch (error: Exception) {
+                    Result.failure(error)
+                }
+                val completedWorker = Thread.currentThread()
+                runOnUiThread {
+                    if (activeUpdateThread === completedWorker) {
+                        activeUpdateThread = null
+                    }
+                    if (
+                        generation != updateGeneration ||
+                        isFinishing ||
+                        isDestroyed ||
+                        currentScreen != Screen.MANAGEMENT
+                    ) {
+                        if (!isFinishing && !isDestroyed && currentScreen == Screen.MANAGEMENT) {
+                            renderUpdateSection()
+                        }
+                        return@runOnUiThread
+                    }
+                    activeUpdateClient = null
+                    onComplete(result)
+                }
+            },
+            UPDATE_THREAD_NAME,
+        )
+        activeUpdateThread = worker
+        worker.start()
+    }
+
+    private fun cancelActiveUpdateTask(restoreIdleState: Boolean) {
+        val client = activeUpdateClient
+        val worker = activeUpdateThread
+        if (client == null && worker == null) return
+        updateGeneration += 1
+        client?.cancel()
+        worker?.interrupt()
+        activeUpdateClient = null
+        if (restoreIdleState) {
+            updateState = when (updateState) {
+                UpdateState.CHECKING -> UpdateState.IDLE
+                UpdateState.DOWNLOADING -> {
+                    if (availableUpdate == null) UpdateState.IDLE else UpdateState.AVAILABLE
+                }
+                else -> updateState
+            }
+            renderUpdateSection()
+        }
+    }
+
+    private fun resetUpdateSession() {
+        cancelActiveUpdateTask(restoreIdleState = false)
+        waitingForInstallPermission = false
+        availableUpdate = null
+        verifiedUpdate = null
+        updateState = UpdateState.IDLE
+    }
+
     private fun homeAppButton(app: LaunchableApp): TextView =
-        plainText(app.label, HOME_TEXT_SIZE_SP).apply {
+        plainText(app.label, preferences.homeAppTextSizeSp().toFloat()).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), 0, dp(12), 0)
             minHeight = dp(HOME_ROW_HEIGHT_DP)
@@ -552,14 +918,13 @@ class MainActivity : Activity() {
         }
         statusView = plainText("", STATUS_TEXT_SIZE_SP).apply {
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
-            typeface = Typeface.MONOSPACE
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             setPadding(dp(8), 0, dp(8), 0)
             isFocusable = true
-            setOnLongClickListener {
+            installDelayedLongPress(this) {
                 if (currentScreen != Screen.MANAGEMENT) {
                     showManagement(isFirstRun = false)
                 }
-                true
             }
         }
         root.addView(
@@ -754,6 +1119,82 @@ class MainActivity : Activity() {
         }
     }
 
+    @SuppressLint("ClickableViewAccessibility")
+    private fun installDelayedLongPress(view: View, onLongPress: () -> Unit) {
+        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
+        var downX = 0f
+        var downY = 0f
+        var armed = false
+
+        val trigger = Runnable {
+            if (!armed) return@Runnable
+            armed = false
+            onLongPress()
+        }
+        fun cancelPendingTrigger() {
+            armed = false
+            view.removeCallbacks(trigger)
+        }
+
+        view.isLongClickable = false
+        view.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    cancelPendingTrigger()
+                    downX = event.x
+                    downY = event.y
+                    armed = true
+                    view.postDelayed(trigger, MANAGEMENT_LONG_PRESS_DURATION_MS)
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    if (
+                        armed &&
+                        (kotlin.math.abs(event.x - downX) > touchSlop ||
+                            kotlin.math.abs(event.y - downY) > touchSlop)
+                    ) {
+                        cancelPendingTrigger()
+                    }
+                }
+
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL,
+                MotionEvent.ACTION_POINTER_DOWN,
+                -> cancelPendingTrigger()
+            }
+            true
+        }
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(attachedView: View) = Unit
+
+            override fun onViewDetachedFromWindow(detachedView: View) {
+                cancelPendingTrigger()
+            }
+        })
+        view.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(
+                host: View,
+                info: AccessibilityNodeInfo,
+            ) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.isLongClickable = true
+                info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_LONG_CLICK)
+            }
+
+            override fun performAccessibilityAction(
+                host: View,
+                action: Int,
+                arguments: Bundle?,
+            ): Boolean {
+                if (action == AccessibilityNodeInfo.ACTION_LONG_CLICK && host.isEnabled) {
+                    onLongPress()
+                    return true
+                }
+                return super.performAccessibilityAction(host, action, arguments)
+            }
+        }
+    }
+
     private fun plainText(text: CharSequence, sizeSp: Float): TextView = TextView(this).apply {
         this.text = text
         setTextColor(Color.BLACK)
@@ -837,6 +1278,10 @@ class MainActivity : Activity() {
         previousPageButton = null
         nextPageButton = null
         defaultLauncherContainer = null
+        homeTextSizeValueView = null
+        decreaseHomeTextSizeButton = null
+        increaseHomeTextSizeButton = null
+        updateContainer = null
         homeRoot = null
         homeErrorView = null
         cachedApps = emptyList()
@@ -847,9 +1292,25 @@ class MainActivity : Activity() {
         MANAGEMENT,
     }
 
+    private enum class UpdateState {
+        IDLE,
+        CHECKING,
+        UP_TO_DATE,
+        AVAILABLE,
+        DOWNLOADING,
+        READY,
+        INSTALL_PERMISSION_REQUIRED,
+        CHECK_FAILED,
+        DOWNLOAD_FAILED,
+        INSTALL_FAILED,
+        FILE_UNAVAILABLE,
+    }
+
     private companion object {
         const val REQUEST_HOME_ROLE = 1001
         const val AVAILABLE_PAGE_SIZE = 6
+        const val UPDATE_CACHE_DIRECTORY = "updates"
+        const val UPDATE_THREAD_NAME = "EInkLauncherUpdate"
 
         const val HOME_SIDE_MARGIN_DP = 40
         const val HOME_MAX_WIDTH_DP = 420
@@ -861,8 +1322,9 @@ class MainActivity : Activity() {
         const val STATUS_TOP_MARGIN_DP = 4
         const val STATUS_END_MARGIN_DP = 20
         const val ACTION_HEIGHT_DP = 48
+        const val MANAGEMENT_LONG_PRESS_DURATION_MS = 1_000L
 
-        const val HOME_TEXT_SIZE_SP = 23f
+        const val HOME_EMPTY_TEXT_SIZE_SP = 23f
         const val TITLE_TEXT_SIZE_SP = 24f
         const val SECTION_TEXT_SIZE_SP = 18f
         const val BODY_TEXT_SIZE_SP = 16f

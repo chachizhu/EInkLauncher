@@ -46,6 +46,11 @@ jobs:
           tasks=(lintDebug testDebugUnitTest assembleDebug)
           gradle_args=(--no-daemon)
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version_part='(0|[1-9][0-9]{0,17})'
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v${version_part}\.${version_part}\.${version_part}$ ]]; then
+              printf 'Release tag must use canonical vX.Y.Z form: %s\n' "$GITHUB_REF_NAME" >&2
+              exit 1
+            fi
             tasks+=(assembleRelease)
             gradle_args+=(
               "-PversionName=${GITHUB_REF_NAME#v}"

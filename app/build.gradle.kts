@@ -62,5 +62,9 @@ android {
 }
 
 dependencies {
+    implementation("androidx.core:core:1.15.0") {
+        // FileProvider is needed, but profileinstaller would add delayed startup work.
+        exclude(group = "androidx.profileinstaller", module = "profileinstaller")
+    }
     testImplementation("junit:junit:4.13.2")
 }
