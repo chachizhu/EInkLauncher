@@ -6,7 +6,8 @@
         <item name="android:colorAccent">@color/ink_black</item>
         <item name="android:windowLightStatusBar" tools:targetApi="23">true</item>
         <item name="android:statusBarColor">@color/paper_white</item>
-        <item name="android:navigationBarColor">@color/paper_white</item>
+        <!-- API 21-25 cannot request dark navigation icons, so retain a visible black bar. -->
+        <item name="android:navigationBarColor">@color/ink_black</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowContentTransitions">false</item>

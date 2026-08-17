@@ -3,6 +3,7 @@ package com.sousoulab.einklauncher
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.ActivityOptions
+import android.app.Dialog
 import android.app.role.RoleManager
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
@@ -10,6 +11,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -19,8 +21,9 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.InputFilter
 import android.text.TextUtils
-import android.text.format.DateFormat
+import android.text.format.DateUtils
 import android.util.StateSet
 import android.util.TypedValue
 import android.view.Gravity
@@ -31,8 +34,11 @@ import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.inputmethod.EditorInfo
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -50,11 +56,23 @@ class MainActivity : Activity() {
 
     private var currentScreen = Screen.HOME
     private var firstRunManagement = false
-    private var refreshScreenWhenResumed = false
+    private var managementRefreshWhenResumed = false
+    private var homeRefreshWhenResumed = false
+    private var homePage = 0
+    private var homePageCount = 1
     private var availablePage = 0
     private var cachedApps: List<LaunchableApp> = emptyList()
+    private var homeApps: List<LaunchableApp> = emptyList()
 
-    private var statusView: TextView? = null
+    private var batteryView: TextView? = null
+    private var datePrefixView: TextView? = null
+    private var timeView: TextView? = null
+    private var homeStatusView: LinearLayout? = null
+    private var homeAppsContainer: LinearLayout? = null
+    private var homePagerSpacingView: View? = null
+    private var homePageIndicatorView: TextView? = null
+    private var previousHomePageButton: Button? = null
+    private var nextHomePageButton: Button? = null
     private var selectedContainer: LinearLayout? = null
     private var selectedCountView: TextView? = null
     private var availableContainer: LinearLayout? = null
@@ -62,15 +80,20 @@ class MainActivity : Activity() {
     private var previousPageButton: Button? = null
     private var nextPageButton: Button? = null
     private var defaultLauncherContainer: LinearLayout? = null
+    private var firstRunHintView: TextView? = null
     private var homeTextSizeValueView: TextView? = null
-    private var decreaseHomeTextSizeButton: Button? = null
-    private var increaseHomeTextSizeButton: Button? = null
+    private val displayPresetButtons = mutableMapOf<DisplayPreset, Button>()
+    private val homeClockModeButtons = mutableMapOf<HomeClockMode, Button>()
     private var updateContainer: LinearLayout? = null
     private var homeRoot: FrameLayout? = null
     private var homeErrorView: View? = null
+    private var renameDialog: Dialog? = null
+    private var renameDialogInput: EditText? = null
+    private var renameDialogComponent: ComponentName? = null
     private var defaultLauncherErrorVisible = false
 
     private var currentTime = ""
+    private var currentDate = ""
     private var currentBattery = ""
     private var statusReceiverRegistered = false
 
@@ -90,7 +113,8 @@ class MainActivity : Activity() {
                 Intent.ACTION_TIME_TICK,
                 Intent.ACTION_TIME_CHANGED,
                 Intent.ACTION_TIMEZONE_CHANGED,
-                -> updateTime()
+                Intent.ACTION_DATE_CHANGED,
+                -> updateClock()
             }
         }
     }
@@ -108,10 +132,37 @@ class MainActivity : Activity() {
             "?"
         }
 
+        homePage = savedInstanceState?.getInt(STATE_HOME_PAGE) ?: 0
+        availablePage = savedInstanceState?.getInt(STATE_AVAILABLE_PAGE) ?: 0
+        val restoredScreen = savedInstanceState
+            ?.getString(STATE_SCREEN)
+            ?.let { saved -> Screen.entries.firstOrNull { it.name == saved } }
+        val restoredRenameComponent = savedInstanceState
+            ?.getString(STATE_RENAME_COMPONENT)
+            ?.let(ComponentName::unflattenFromString)
+        val restoredRenameDraft = savedInstanceState?.getString(STATE_RENAME_DRAFT)
+
         if (preferences.isFirstRun()) {
             showManagement(isFirstRun = true)
+        } else if (restoredScreen == Screen.MANAGEMENT) {
+            showManagement(isFirstRun = false)
         } else {
             showHome()
+        }
+        if (
+            currentScreen == Screen.MANAGEMENT &&
+            restoredRenameComponent != null &&
+            restoredRenameComponent in preferences.selectedComponents()
+        ) {
+            val systemLabel = cachedApps
+                .firstOrNull { it.componentName == restoredRenameComponent }
+                ?.label
+                ?: restoredRenameComponent.packageName
+            showRenameAppDialog(
+                component = restoredRenameComponent,
+                systemLabel = systemLabel,
+                initialDraft = restoredRenameDraft,
+            )
         }
     }
 
@@ -123,16 +174,16 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         hideSystemStatusBar()
-        if (refreshScreenWhenResumed) {
-            refreshScreenWhenResumed = false
-            if (currentScreen == Screen.HOME) {
-                showHome()
-            } else {
-                cachedApps = appsRepository.loadApps()
-                renderDefaultLauncherSection()
-                renderSelectedApps()
-                renderAvailableApps()
-            }
+        if (homeRefreshWhenResumed && currentScreen == Screen.HOME) {
+            homeRefreshWhenResumed = false
+            refreshHomeAppsIfChanged()
+        }
+        if (managementRefreshWhenResumed && currentScreen == Screen.MANAGEMENT) {
+            managementRefreshWhenResumed = false
+            cachedApps = appsRepository.loadApps()
+            renderDefaultLauncherSection()
+            renderSelectedApps()
+            renderAvailableApps()
         }
         if (waitingForInstallPermission && currentScreen == Screen.MANAGEMENT) {
             waitingForInstallPermission = false
@@ -147,25 +198,47 @@ class MainActivity : Activity() {
 
     override fun onStop() {
         cancelActiveUpdateTask(restoreIdleState = true)
-        refreshScreenWhenResumed = true
+        if (currentScreen == Screen.MANAGEMENT) {
+            managementRefreshWhenResumed = true
+        } else {
+            homeRefreshWhenResumed = true
+        }
         unregisterStatusReceiver()
         super.onStop()
     }
 
     override fun onDestroy() {
         cancelActiveUpdateTask(restoreIdleState = false)
+        renameDialog?.dismiss()
+        renameDialog = null
+        renameDialogInput = null
+        renameDialogComponent = null
         super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        refreshScreenWhenResumed = false
+        managementRefreshWhenResumed = false
         if (preferences.isFirstRun()) {
             showManagement(isFirstRun = true)
-        } else {
+        } else if (currentScreen != Screen.HOME) {
             showHome()
+        } else {
+            hideSystemStatusBar()
+            updateClock()
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_SCREEN, currentScreen.name)
+        outState.putInt(STATE_HOME_PAGE, homePage)
+        outState.putInt(STATE_AVAILABLE_PAGE, availablePage)
+        renameDialogComponent?.let { component ->
+            outState.putString(STATE_RENAME_COMPONENT, component.flattenToString())
+            outState.putString(STATE_RENAME_DRAFT, renameDialogInput?.text?.toString().orEmpty())
+        }
+        super.onSaveInstanceState(outState)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -186,9 +259,44 @@ class MainActivity : Activity() {
     }
 
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        val pageDelta = when (keyCode) {
+            KeyEvent.KEYCODE_PAGE_UP -> -1
+            KeyEvent.KEYCODE_PAGE_DOWN -> 1
+            else -> 0
+        }
+        val isPaginationScreen = currentScreen == Screen.HOME || currentScreen == Screen.MANAGEMENT
+        if (pageDelta != 0 && isPaginationScreen) {
+            if (event?.repeatCount == 0) {
+                if (currentScreen == Screen.HOME) {
+                    changeHomePage(pageDelta, requestFocusOnFirstItem = true)
+                } else {
+                    val canChangePage = if (pageDelta < 0) {
+                        previousPageButton?.isEnabled == true
+                    } else {
+                        nextPageButton?.isEnabled == true
+                    }
+                    if (canChangePage) {
+                        availablePage += pageDelta
+                        renderAvailableApps(requestFocusOnFirstItem = true)
+                    }
+                }
+            }
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_MENU) {
             showManagement(isFirstRun = false)
+            return true
+        }
+        val isPaginationScreen = currentScreen == Screen.HOME || currentScreen == Screen.MANAGEMENT
+        val isPageKey = keyCode == KeyEvent.KEYCODE_PAGE_UP ||
+            keyCode == KeyEvent.KEYCODE_PAGE_DOWN
+        if (isPaginationScreen && isPageKey) {
             return true
         }
         return super.onKeyUp(keyCode, event)
@@ -206,6 +314,7 @@ class MainActivity : Activity() {
         resetUpdateSession()
         currentScreen = Screen.HOME
         firstRunManagement = false
+        clearHomeReferences()
         clearManagementReferences()
 
         val root = createBaseScreen()
@@ -215,36 +324,47 @@ class MainActivity : Activity() {
             showManagement(isFirstRun = false)
         }
 
-        val selectedApps = appsRepository.loadApps(preferences.selectedComponents())
-        val appList = LinearLayout(this).apply {
+        homeApps = appsRepository.loadApps(preferences.selectedComponents())
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.START
             clipToPadding = false
         }
-
-        if (selectedApps.isEmpty()) {
-            appList.addView(
-                plainText(getString(R.string.no_apps_title), HOME_EMPTY_TEXT_SIZE_SP).apply {
-                    setPadding(dp(12), dp(8), dp(12), dp(8))
-                },
-                linearWrapParams(),
-            )
-            appList.addView(verticalSpace(8))
-            appList.addView(
-                actionButton(getString(R.string.add_apps)) {
-                    showManagement(isFirstRun = false)
-                },
-                linearWrapParams(),
-            )
-        } else {
-            selectedApps.forEach { app ->
-                appList.addView(homeAppButton(app), linearMatchWrapParams())
-                appList.addView(verticalSpace(4))
-            }
+        homeAppsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.START
+            clipToPadding = false
         }
+        content.addView(homeAppsContainer, linearMatchWrapParams())
+
+        val pagination = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        previousHomePageButton = actionButton(getString(R.string.previous_page)) {
+            changeHomePage(-1)
+        }
+        homePageIndicatorView = plainText("", SMALL_TEXT_SIZE_SP).apply {
+            gravity = Gravity.CENTER
+        }
+        nextHomePageButton = actionButton(getString(R.string.next_page)) {
+            changeHomePage(1)
+        }
+        pagination.addView(previousHomePageButton, linearWrapParams())
+        pagination.addView(
+            homePageIndicatorView,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(8)
+                marginEnd = dp(8)
+            },
+        )
+        pagination.addView(nextHomePageButton, linearWrapParams())
+        homePagerSpacingView = verticalSpace(HOME_PAGER_TOP_SPACING_DP)
+        content.addView(homePagerSpacingView)
+        content.addView(pagination, linearMatchWrapParams())
 
         root.addView(
-            appList,
+            content,
             FrameLayout.LayoutParams(
                 minOf(
                     dp(HOME_MAX_WIDTH_DP),
@@ -255,10 +375,130 @@ class MainActivity : Activity() {
             ).apply {
                 marginStart = dp(HOME_SIDE_MARGIN_DP)
                 marginEnd = dp(HOME_SIDE_MARGIN_DP)
+                topMargin = dp(HOME_CONTENT_TOP_RESERVE_DP)
+                bottomMargin = dp(HOME_CONTENT_BOTTOM_RESERVE_DP)
             },
         )
         setContentView(root)
+        renderHomePage()
         hideSystemStatusBar()
+    }
+
+    private fun renderHomePage(requestFocusOnFirstItem: Boolean = false) {
+        val container = homeAppsContainer ?: return
+        val preset = preferences.displayPreset()
+        val homeTextSizeSp = preferences.homeAppTextSizeSp()
+        val homeTextSizePx = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_SP,
+            homeTextSizeSp.toFloat(),
+            resources.displayMetrics,
+        )
+        val scaledTextHeightPx = kotlin.math.ceil(
+            homeTextSizePx * HOME_TEXT_LINE_HEIGHT_FACTOR,
+        ).toInt()
+        val rowHeightPx = maxOf(
+            dp(preset.homeRowHeightDp),
+            scaledTextHeightPx,
+        ) + dp(HOME_ROW_SPACING_DP)
+        val displayHeight = resources.displayMetrics.heightPixels
+        val baseAvailableHeight = (
+            displayHeight -
+                dp(HOME_CONTENT_TOP_RESERVE_DP + HOME_CONTENT_BOTTOM_RESERVE_DP)
+            ).coerceAtLeast(rowHeightPx)
+        var pagination = HomePaginationPolicy.resolve(
+            itemCount = homeApps.size,
+            availableHeightPx = baseAvailableHeight,
+            rowHeightPx = rowHeightPx,
+            requestedPage = homePage,
+        )
+        if (pagination.pageCount > 1) {
+            pagination = HomePaginationPolicy.resolve(
+                itemCount = homeApps.size,
+                availableHeightPx = (
+                    baseAvailableHeight -
+                        dp(ACTION_HEIGHT_DP + HOME_PAGER_TOP_SPACING_DP)
+                    ).coerceAtLeast(rowHeightPx),
+                rowHeightPx = rowHeightPx,
+                requestedPage = homePage,
+            )
+        }
+        homePage = pagination.clampedPage
+        homePageCount = pagination.pageCount
+        container.removeAllViews()
+        container.minimumHeight = if (homeApps.isEmpty()) {
+            0
+        } else {
+            (pagination.pageSize * rowHeightPx - dp(HOME_ROW_SPACING_DP)).coerceAtLeast(0)
+        }
+
+        var firstHomeAppView: View? = null
+        if (homeApps.isEmpty()) {
+            container.addView(
+                plainText(getString(R.string.no_apps_title), HOME_EMPTY_TEXT_SIZE_SP).apply {
+                    setPadding(dp(12), dp(8), dp(12), dp(8))
+                },
+                linearWrapParams(),
+            )
+            container.addView(verticalSpace(8))
+            container.addView(
+                actionButton(getString(R.string.add_apps)) {
+                    showManagement(isFirstRun = false)
+                },
+                linearWrapParams(),
+            )
+        } else {
+            val start = homePage * pagination.pageSize
+            val pageItems = homeApps.drop(start).take(pagination.pageSize)
+            pageItems.forEachIndexed { index, app ->
+                val appView = homeAppButton(app, preset, homeTextSizeSp)
+                if (firstHomeAppView == null) firstHomeAppView = appView
+                container.addView(
+                    appView,
+                    linearMatchWrapParams(),
+                )
+                if (index < pageItems.lastIndex) {
+                    container.addView(verticalSpace(HOME_ROW_SPACING_DP))
+                }
+            }
+        }
+
+        val pagerVisible = pagination.pageCount > 1
+        homePagerSpacingView?.visibility = if (pagerVisible) View.VISIBLE else View.GONE
+        homePageIndicatorView?.apply {
+            visibility = if (pagerVisible) View.VISIBLE else View.GONE
+            text = getString(
+                R.string.page_indicator,
+                pagination.clampedPage + 1,
+                pagination.pageCount,
+            )
+        }
+        previousHomePageButton?.apply {
+            visibility = if (pagerVisible) View.VISIBLE else View.GONE
+            isEnabled = pagination.clampedPage > 0
+        }
+        nextHomePageButton?.apply {
+            visibility = if (pagerVisible) View.VISIBLE else View.GONE
+            isEnabled = pagination.clampedPage < pagination.pageCount - 1
+        }
+        if (requestFocusOnFirstItem) firstHomeAppView?.requestFocus()
+    }
+
+    private fun changeHomePage(
+        delta: Int,
+        requestFocusOnFirstItem: Boolean = false,
+    ): Boolean {
+        val targetPage = (homePage + delta).coerceIn(0, homePageCount - 1)
+        if (targetPage == homePage) return false
+        homePage = targetPage
+        renderHomePage(requestFocusOnFirstItem)
+        return true
+    }
+
+    private fun refreshHomeAppsIfChanged() {
+        val refreshedApps = appsRepository.loadApps(preferences.selectedComponents())
+        if (refreshedApps == homeApps) return
+        homeApps = refreshedApps
+        renderHomePage()
     }
 
     private fun showManagement(isFirstRun: Boolean) {
@@ -267,10 +507,9 @@ class MainActivity : Activity() {
         resetUpdateSession()
         currentScreen = Screen.MANAGEMENT
         firstRunManagement = isFirstRun
-        homeRoot = null
-        homeErrorView = null
+        clearHomeReferences()
+        clearManagementReferences()
         defaultLauncherErrorVisible = false
-        availablePage = 0
         cachedApps = appsRepository.loadApps()
 
         val root = createBaseScreen()
@@ -299,7 +538,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         header.addView(
-            plainText(getString(R.string.manage_apps_title), TITLE_TEXT_SIZE_SP).apply {
+            plainText(getString(R.string.settings_title), TITLE_TEXT_SIZE_SP).apply {
                 setTypeface(typeface, Typeface.BOLD)
             },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
@@ -308,55 +547,95 @@ class MainActivity : Activity() {
             actionButton(getString(R.string.done), ::finishManagement),
             linearWrapParams(),
         )
-        content.addView(header, linearMatchWrapParams())
-
-        if (isFirstRun) {
-            content.addView(verticalSpace(12))
-            content.addView(
-                plainText(getString(R.string.first_run_hint), BODY_TEXT_SIZE_SP).apply {
-                    setLineSpacing(0f, 1.15f)
-                },
-                linearMatchWrapParams(),
-            )
-        }
-
-        content.addView(verticalSpace(16))
-        defaultLauncherContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.START
-        }
-        content.addView(defaultLauncherContainer, linearMatchWrapParams())
-
-        content.addView(verticalSpace(20))
-        content.addView(sectionHeading(getString(R.string.home_app_text_size)), linearMatchWrapParams())
-        content.addView(verticalSpace(6))
-        val textSizeControls = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(ACTION_HEIGHT_DP)
-        }
-        decreaseHomeTextSizeButton = actionButton(getString(R.string.decrease_text_size)) {
-            updateHomeTextSize(HomeTextSizePolicy::decrease)
-        }
-        homeTextSizeValueView = plainText("", BODY_TEXT_SIZE_SP).apply {
-            gravity = Gravity.CENTER
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        }
-        increaseHomeTextSizeButton = actionButton(getString(R.string.increase_text_size)) {
-            updateHomeTextSize(HomeTextSizePolicy::increase)
-        }
-        textSizeControls.addView(decreaseHomeTextSizeButton, compactButtonParams())
-        textSizeControls.addView(
-            homeTextSizeValueView,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = dp(8)
-                marginEnd = dp(8)
+        root.addView(
+            header,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(ACTION_HEIGHT_DP),
+                Gravity.TOP,
+            ).apply {
+                topMargin = dp(MANAGEMENT_TOP_MARGIN_DP)
+                marginStart = dp(MANAGEMENT_SIDE_MARGIN_DP)
+                marginEnd = dp(MANAGEMENT_SIDE_MARGIN_DP)
             },
         )
-        textSizeControls.addView(increaseHomeTextSizeButton, compactButtonParams())
-        content.addView(textSizeControls, linearMatchWrapParams())
-        renderHomeTextSizeSetting()
+
+        if (isFirstRun) {
+            firstRunHintView = plainText(getString(R.string.first_run_hint), BODY_TEXT_SIZE_SP).apply {
+                    setLineSpacing(0f, 1.15f)
+                }
+            content.addView(firstRunHintView, linearMatchWrapParams())
+        }
+
+        if (!isFirstRun) {
+            content.addView(verticalSpace(16))
+            defaultLauncherContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.START
+            }
+            content.addView(defaultLauncherContainer, linearMatchWrapParams())
+
+            content.addView(verticalSpace(20))
+            content.addView(
+                sectionHeading(getString(R.string.home_display_preset)),
+                linearMatchWrapParams(),
+            )
+            content.addView(verticalSpace(6))
+            val textSizeControls = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(ACTION_HEIGHT_DP)
+            }
+            displayPresetButtons.clear()
+            DisplayPreset.entries.forEachIndexed { index, preset ->
+                val button = actionButton(displayPresetLabel(preset)) {
+                    updateDisplayPreset(preset)
+                }
+                displayPresetButtons[preset] = button
+                textSizeControls.addView(
+                    button,
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                if (index < DisplayPreset.entries.lastIndex) {
+                    textSizeControls.addView(horizontalSpace(6))
+                }
+            }
+            content.addView(textSizeControls, linearMatchWrapParams())
+            content.addView(verticalSpace(6))
+            homeTextSizeValueView = plainText("", SMALL_TEXT_SIZE_SP).apply {
+                setLineSpacing(0f, 1.15f)
+            }
+            content.addView(homeTextSizeValueView, linearMatchWrapParams())
+            renderHomeTextSizeSetting()
+
+            content.addView(verticalSpace(16))
+            content.addView(
+                sectionHeading(getString(R.string.home_clock_mode_title)),
+                linearMatchWrapParams(),
+            )
+            content.addView(verticalSpace(6))
+            val clockModeControls = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(ACTION_HEIGHT_DP)
+            }
+            homeClockModeButtons.clear()
+            HomeClockMode.entries.forEachIndexed { index, mode ->
+                val button = actionButton(homeClockModeLabel(mode)) {
+                    updateHomeClockMode(mode)
+                }
+                homeClockModeButtons[mode] = button
+                clockModeControls.addView(
+                    button,
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                if (index < HomeClockMode.entries.lastIndex) {
+                    clockModeControls.addView(horizontalSpace(6))
+                }
+            }
+            content.addView(clockModeControls, linearMatchWrapParams())
+            renderHomeClockModeSetting()
+        }
 
         content.addView(verticalSpace(20))
         val selectedHeading = LinearLayout(this).apply {
@@ -371,6 +650,11 @@ class MainActivity : Activity() {
         selectedHeading.addView(selectedCountView, linearWrapParams())
         content.addView(selectedHeading, linearMatchWrapParams())
         content.addView(verticalSpace(6))
+        content.addView(
+            plainText(getString(R.string.selected_apps_hint), SMALL_TEXT_SIZE_SP),
+            linearMatchWrapParams(),
+        )
+        content.addView(verticalSpace(4))
 
         selectedContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -414,15 +698,17 @@ class MainActivity : Activity() {
         pagination.addView(nextPageButton, linearWrapParams())
         content.addView(pagination, linearMatchWrapParams())
 
-        content.addView(verticalSpace(20))
-        content.addView(sectionHeading(getString(R.string.updates_title)), linearMatchWrapParams())
-        content.addView(verticalSpace(6))
-        updateContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.START
+        if (!isFirstRun) {
+            content.addView(verticalSpace(20))
+            content.addView(sectionHeading(getString(R.string.updates_title)), linearMatchWrapParams())
+            content.addView(verticalSpace(6))
+            updateContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.START
+            }
+            content.addView(updateContainer, linearMatchWrapParams())
+            renderUpdateSection()
         }
-        content.addView(updateContainer, linearMatchWrapParams())
-        renderUpdateSection()
 
         root.addView(
             scrollView,
@@ -430,7 +716,7 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ).apply {
-                topMargin = dp(MANAGEMENT_TOP_MARGIN_DP)
+                topMargin = dp(MANAGEMENT_CONTENT_TOP_MARGIN_DP)
             },
         )
 
@@ -442,6 +728,15 @@ class MainActivity : Activity() {
     }
 
     private fun finishManagement() {
+        if (firstRunManagement && preferences.selectedComponents().isEmpty()) {
+            val message = getString(R.string.first_run_selection_required)
+            firstRunHintView?.apply {
+                text = message
+                setTypeface(typeface, Typeface.BOLD)
+                announceForAccessibility(message)
+            }
+            return
+        }
         val shouldRequestHomeRole = firstRunManagement && !isDefaultLauncher()
         if (firstRunManagement) preferences.markOnboardingComplete()
         showHome()
@@ -455,9 +750,19 @@ class MainActivity : Activity() {
         selectedCountView?.text = getString(R.string.selected_count, selected.size)
         container.removeAllViews()
 
+        if (selected.isEmpty()) {
+            container.addView(
+                plainText(getString(R.string.no_selected_apps_hint), SMALL_TEXT_SIZE_SP),
+                linearMatchWrapParams(),
+            )
+            return
+        }
+
         selected.forEachIndexed { index, component ->
             val app = appsByComponent[component]
-            val label = app?.label ?: component.packageName
+            val systemLabel = app?.label ?: component.packageName
+            val alias = preferences.appAlias(component)
+            val label = alias ?: systemLabel
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -471,9 +776,26 @@ class MainActivity : Activity() {
                 plainText(label, BODY_TEXT_SIZE_SP).apply {
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
+                    isClickable = true
+                    isFocusable = true
+                    background = focusOnlyBackground()
+                    contentDescription = getString(R.string.rename_app, label)
+                    setPadding(dp(4), dp(4), dp(4), dp(4))
+                    setOnClickListener {
+                        showRenameAppDialog(component, systemLabel)
+                    }
                 },
                 linearMatchWrapParams(),
             )
+            if (alias != null && alias != systemLabel) {
+                labelColumn.addView(
+                    plainText(
+                        getString(R.string.system_app_name, systemLabel),
+                        SMALL_TEXT_SIZE_SP,
+                    ),
+                    linearMatchWrapParams(),
+                )
+            }
             if (app == null) {
                 labelColumn.addView(
                     plainText(getString(R.string.app_unavailable), SMALL_TEXT_SIZE_SP),
@@ -491,12 +813,14 @@ class MainActivity : Activity() {
                 updateSelection { SelectionPolicy.moveUp(it, component) }
             }.apply {
                 isEnabled = index > 0
+                visibility = if (index > 0) View.VISIBLE else View.INVISIBLE
                 contentDescription = getString(R.string.move_app_up, label)
             }
             val downButton = actionButton(getString(R.string.move_down)) {
                 updateSelection { SelectionPolicy.moveDown(it, component) }
             }.apply {
                 isEnabled = index < selected.lastIndex
+                visibility = if (index < selected.lastIndex) View.VISIBLE else View.INVISIBLE
                 contentDescription = getString(R.string.move_app_down, label)
             }
             val removeButton = actionButton(getString(R.string.remove)) {
@@ -514,7 +838,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun renderAvailableApps() {
+    private fun renderAvailableApps(requestFocusOnFirstItem: Boolean = false) {
         val container = availableContainer ?: return
         val selected = preferences.selectedComponents()
         val selectedSet = selected.toHashSet()
@@ -522,13 +846,29 @@ class MainActivity : Activity() {
         val page = SelectionPolicy.page(available, availablePage, AVAILABLE_PAGE_SIZE)
         availablePage = page.pageIndex
         container.removeAllViews()
+        var firstAvailableRow: View? = null
+
+        if (page.items.isEmpty()) {
+            container.addView(
+                plainText(getString(R.string.no_available_apps), SMALL_TEXT_SIZE_SP),
+                linearMatchWrapParams(),
+            )
+        }
 
         page.items.forEachIndexed { index, app ->
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 minimumHeight = dp(MANAGEMENT_ROW_HEIGHT_DP)
+                isClickable = selected.size < SelectionPolicy.MAX_SELECTED_APPS
+                isFocusable = isClickable
+                if (isClickable) {
+                    background = focusOnlyBackground()
+                    contentDescription = getString(R.string.add_app, app.label)
+                    setOnClickListener { addSelectedApp(app.componentName) }
+                }
             }
+            if (firstAvailableRow == null && row.isFocusable) firstAvailableRow = row
             row.addView(
                 plainText(app.label, BODY_TEXT_SIZE_SP).apply {
                     maxLines = 1
@@ -545,6 +885,7 @@ class MainActivity : Activity() {
                 }.apply {
                     contentDescription = getString(R.string.add_app, app.label)
                     isEnabled = selected.size < SelectionPolicy.MAX_SELECTED_APPS
+                    if (!isEnabled) text = getString(R.string.selection_full_short)
                 },
                 compactButtonParams(),
             )
@@ -552,13 +893,25 @@ class MainActivity : Activity() {
             if (index < page.items.lastIndex) container.addView(verticalSpace(4))
         }
 
-        pageIndicatorView?.text = getString(
-            R.string.page_indicator,
-            page.pageIndex + 1,
-            page.pageCount,
-        )
+        pageIndicatorView?.text = if (page.items.isEmpty()) {
+            getString(R.string.page_indicator, page.pageIndex + 1, page.pageCount)
+        } else {
+            val rangeStart = page.pageIndex * AVAILABLE_PAGE_SIZE + 1
+            val rangeEnd = rangeStart + page.items.size - 1
+            getString(
+                R.string.available_page_indicator,
+                rangeStart,
+                rangeEnd,
+                available.size,
+                page.pageIndex + 1,
+                page.pageCount,
+            )
+        }
         previousPageButton?.isEnabled = page.hasPrevious
         nextPageButton?.isEnabled = page.hasNext
+        previousPageButton?.visibility = if (page.hasPrevious) View.VISIBLE else View.INVISIBLE
+        nextPageButton?.visibility = if (page.hasNext) View.VISIBLE else View.INVISIBLE
+        if (requestFocusOnFirstItem) firstAvailableRow?.requestFocus()
     }
 
     private fun addSelectedApp(component: ComponentName) {
@@ -576,19 +929,202 @@ class MainActivity : Activity() {
         renderAvailableApps()
     }
 
-    private fun updateHomeTextSize(transform: (Int) -> Int) {
-        val oldSizeSp = preferences.homeAppTextSizeSp()
-        val newSizeSp = transform(oldSizeSp)
-        if (newSizeSp == oldSizeSp) return
-        preferences.saveHomeAppTextSizeSp(newSizeSp)
+    private fun updateDisplayPreset(preset: DisplayPreset) {
+        if (preferences.hasExplicitDisplayPreset() && preferences.displayPreset() == preset) return
+        preferences.saveDisplayPreset(preset)
         renderHomeTextSizeSetting()
     }
 
     private fun renderHomeTextSizeSetting() {
-        val sizeSp = preferences.homeAppTextSizeSp()
-        homeTextSizeValueView?.text = getString(R.string.home_text_size_value, sizeSp)
-        decreaseHomeTextSizeButton?.isEnabled = sizeSp > HomeTextSizePolicy.MIN_SP
-        increaseHomeTextSizeButton?.isEnabled = sizeSp < HomeTextSizePolicy.MAX_SP
+        val preset = preferences.displayPreset()
+        val explicitPreset = preferences.hasExplicitDisplayPreset()
+        val textSizeSp = preferences.homeAppTextSizeSp()
+        homeTextSizeValueView?.text = if (explicitPreset) {
+            getString(
+                R.string.home_display_preset_summary,
+                displayPresetLabel(preset),
+                textSizeSp,
+            )
+        } else {
+            getString(R.string.home_display_legacy_summary, textSizeSp)
+        }
+        displayPresetButtons.forEach { (buttonPreset, button) ->
+            button.isSelected = explicitPreset && buttonPreset == preset
+            button.contentDescription = getString(
+                if (button.isSelected) {
+                    R.string.display_preset_selected
+                } else {
+                    R.string.display_preset_option
+                },
+                displayPresetLabel(buttonPreset),
+            )
+        }
+    }
+
+    private fun displayPresetLabel(preset: DisplayPreset): String = getString(
+        when (preset) {
+            DisplayPreset.COMPACT -> R.string.display_preset_compact
+            DisplayPreset.COMFORTABLE -> R.string.display_preset_comfortable
+            DisplayPreset.LARGE -> R.string.display_preset_large
+        },
+    )
+
+    private fun updateHomeClockMode(mode: HomeClockMode) {
+        if (preferences.homeClockMode() == mode) return
+        preferences.saveHomeClockMode(mode)
+        renderHomeClockModeSetting()
+    }
+
+    private fun renderHomeClockModeSetting() {
+        val selectedMode = preferences.homeClockMode()
+        homeClockModeButtons.forEach { (mode, button) ->
+            button.isSelected = mode == selectedMode
+            button.contentDescription = getString(
+                if (button.isSelected) {
+                    R.string.home_clock_mode_selected
+                } else {
+                    R.string.home_clock_mode_option
+                },
+                homeClockModeLabel(mode),
+            )
+        }
+    }
+
+    private fun homeClockModeLabel(mode: HomeClockMode): String = getString(
+        when (mode) {
+            HomeClockMode.TIME_ONLY -> R.string.home_clock_time_only
+            HomeClockMode.DATE_AND_TIME -> R.string.home_clock_date_and_time
+        },
+    )
+
+    @Suppress("DEPRECATION")
+    private fun showRenameAppDialog(
+        component: ComponentName,
+        systemLabel: String,
+        initialDraft: String? = null,
+    ) {
+        renameDialog?.dismiss()
+        val dialog = Dialog(this)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.START
+            setPadding(dp(20), dp(20), dp(20), dp(16))
+            background = whiteRectangle(strokeWidthDp = 2)
+        }
+        content.addView(
+            sectionHeading(getString(R.string.rename_app_title)),
+            linearMatchWrapParams(),
+        )
+        content.addView(verticalSpace(8))
+        content.addView(
+            plainText(getString(R.string.system_app_name, systemLabel), SMALL_TEXT_SIZE_SP),
+            linearMatchWrapParams(),
+        )
+        content.addView(verticalSpace(8))
+        val input = EditText(this).apply {
+            setText(initialDraft ?: preferences.appAlias(component).orEmpty())
+            hint = systemLabel
+            setTextColor(Color.BLACK)
+            setHintTextColor(DISABLED_INK_COLOR)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, BODY_TEXT_SIZE_SP)
+            setSingleLine(true)
+            maxLines = 1
+            filters = arrayOf(InputFilter.LengthFilter(AppAliasPolicy.MAX_LENGTH))
+            setSelectAllOnFocus(true)
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            contentDescription = getString(R.string.app_alias_input)
+        }
+        content.addView(input, linearMatchWrapParams())
+        content.addView(verticalSpace(12))
+
+        val saveAlias: () -> Unit = {
+            preferences.saveAppAlias(component, input.text?.toString())
+            dialog.dismiss()
+            renderSelectedApps()
+            val savedLabel = preferences.appAlias(component) ?: systemLabel
+            selectedContainer?.announceForAccessibility(
+                getString(R.string.app_name_saved, savedLabel),
+            )
+            Unit
+        }
+        input.setOnEditorActionListener { _, actionId, event ->
+            val enterReleased = event?.keyCode == KeyEvent.KEYCODE_ENTER &&
+                event.action == KeyEvent.ACTION_UP
+            if (actionId == EditorInfo.IME_ACTION_DONE || enterReleased) {
+                saveAlias()
+                true
+            } else {
+                false
+            }
+        }
+
+        content.addView(
+            actionButton(getString(R.string.restore_system_name)) {
+                preferences.saveAppAlias(component, null)
+                dialog.dismiss()
+                renderSelectedApps()
+                selectedContainer?.announceForAccessibility(
+                    getString(R.string.app_name_restored, systemLabel),
+                )
+            },
+            linearMatchWrapParams(),
+        )
+        content.addView(verticalSpace(8))
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        }
+        actions.addView(
+            actionButton(getString(android.R.string.cancel)) { dialog.dismiss() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        actions.addView(horizontalSpace(6))
+        actions.addView(
+            actionButton(getString(R.string.save), saveAlias),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        content.addView(actions, linearMatchWrapParams())
+
+        val dialogScroll = NoFlingScrollView(this).apply {
+            isFillViewport = false
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
+        dialogScroll.addView(
+            content,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+
+        renameDialog = dialog
+        renameDialogInput = input
+        renameDialogComponent = component
+        dialog.setOnDismissListener {
+            if (renameDialog === dialog) {
+                renameDialog = null
+                renameDialogInput = null
+                renameDialogComponent = null
+            }
+        }
+        dialog.setContentView(dialogScroll)
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            attributes = attributes.apply { windowAnimations = 0 }
+        }
+        dialog.show()
+        val availableDialogWidth = (
+            resources.displayMetrics.widthPixels - dp(RENAME_DIALOG_SIDE_MARGIN_DP * 2)
+        ).coerceAtLeast(dp(ACTION_HEIGHT_DP))
+        dialog.window?.setLayout(
+            minOf(dp(RENAME_DIALOG_MAX_WIDTH_DP), availableDialogWidth),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+        input.requestFocus()
     }
 
     private fun renderUpdateSection() {
@@ -856,27 +1392,44 @@ class MainActivity : Activity() {
         updateState = UpdateState.IDLE
     }
 
-    private fun homeAppButton(app: LaunchableApp): TextView =
-        plainText(app.label, preferences.homeAppTextSizeSp().toFloat()).apply {
+    private fun homeAppButton(
+        app: LaunchableApp,
+        preset: DisplayPreset,
+        textSizeSp: Int,
+    ): TextView {
+        val displayLabel = preferences.appAlias(app.componentName) ?: app.label
+        return plainText(displayLabel, textSizeSp.toFloat()).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), 0, dp(12), 0)
-            minHeight = dp(HOME_ROW_HEIGHT_DP)
+            minHeight = dp(preset.homeRowHeightDp)
+            typeface = weightedTypeface(preset.fontWeight)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             isClickable = true
             isFocusable = true
             background = focusOnlyBackground()
+            contentDescription = getString(R.string.open_app, displayLabel)
+            accessibilityDelegate = object : View.AccessibilityDelegate() {
+                override fun onInitializeAccessibilityNodeInfo(
+                    host: View,
+                    info: AccessibilityNodeInfo,
+                ) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.className = Button::class.java.name
+                }
+            }
             setOnClickListener {
                 if (appsRepository.launch(app.componentName)) {
                     @Suppress("DEPRECATION")
                     overridePendingTransition(0, 0)
                 } else {
-                    showHomeLaunchError()
+                    showHomeLaunchError(displayLabel)
                 }
             }
         }
+    }
 
-    private fun showHomeLaunchError() {
+    private fun showHomeLaunchError(appLabel: String) {
         val root = homeRoot ?: return
         if (homeErrorView != null) return
 
@@ -887,7 +1440,7 @@ class MainActivity : Activity() {
             background = whiteRectangle(strokeWidthDp = 1)
         }
         panel.addView(
-            plainText(getString(R.string.unable_to_open_app), BODY_TEXT_SIZE_SP),
+            plainText(getString(R.string.unable_to_open_app, appLabel), BODY_TEXT_SIZE_SP),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                 marginEnd = dp(12)
             },
@@ -909,6 +1462,9 @@ class MainActivity : Activity() {
                 bottomMargin = dp(24)
             },
         )
+        panel.isFocusable = true
+        panel.requestFocus()
+        panel.announceForAccessibility(getString(R.string.unable_to_open_app, appLabel))
     }
 
     private fun createBaseScreen(): FrameLayout {
@@ -916,32 +1472,116 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.WHITE)
             clipChildren = false
         }
-        statusView = plainText("", STATUS_TEXT_SIZE_SP).apply {
-            gravity = Gravity.CENTER_VERTICAL or Gravity.END
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            setPadding(dp(8), 0, dp(8), 0)
-            isFocusable = true
-            installDelayedLongPress(this) {
-                if (currentScreen != Screen.MANAGEMENT) {
-                    showManagement(isFirstRun = false)
+        batteryView = null
+        datePrefixView = null
+        timeView = null
+        homeStatusView = null
+        if (currentBattery.isEmpty()) readCurrentBattery()?.let(::updateBattery)
+
+        if (currentScreen == Screen.HOME) {
+            val status = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.END
+                setPadding(
+                    dp(STATUS_HORIZONTAL_PADDING_DP),
+                    0,
+                    dp(STATUS_HORIZONTAL_PADDING_DP),
+                    0,
+                )
+                minimumHeight = dp(MIN_STATUS_TOUCH_HEIGHT_DP)
+                isClickable = true
+                isFocusable = true
+                background = focusOnlyBackground()
+                setOnClickListener { showManagement(isFirstRun = false) }
+                accessibilityDelegate = object : View.AccessibilityDelegate() {
+                    override fun onInitializeAccessibilityNodeInfo(
+                        host: View,
+                        info: AccessibilityNodeInfo,
+                    ) {
+                        super.onInitializeAccessibilityNodeInfo(host, info)
+                        info.className = Button::class.java.name
+                    }
                 }
             }
+            batteryView = plainText("", BATTERY_TEXT_SIZE_SP).apply {
+                gravity = Gravity.END
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            val clockRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                isBaselineAligned = true
+                layoutDirection = View.LAYOUT_DIRECTION_LTR
+            }
+            datePrefixView = plainText("", DATE_TEXT_SIZE_SP).apply {
+                gravity = Gravity.END
+                typeface = weightedTypeface(400)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            timeView = plainText("", TIME_TEXT_SIZE_SP).apply {
+                gravity = Gravity.END
+                typeface = weightedTypeface(600)
+                maxLines = 1
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            clockRow.addView(
+                datePrefixView,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            clockRow.addView(timeView, linearWrapParams())
+            status.addView(batteryView, linearMatchWrapParams())
+            status.addView(
+                clockRow,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    topMargin = dp(STATUS_CLOCK_TOP_SPACING_DP)
+                },
+            )
+            homeStatusView = status
+            root.addView(
+                status,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP,
+                ).apply {
+                    topMargin = dp(STATUS_TOP_MARGIN_DP)
+                    marginStart = dp(STATUS_END_MARGIN_DP)
+                    marginEnd = dp(STATUS_END_MARGIN_DP)
+                },
+            )
+        } else {
+            batteryView = plainText("", BATTERY_TEXT_SIZE_SP).apply {
+                gravity = Gravity.CENTER_VERTICAL or Gravity.END
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+                setPadding(dp(8), 0, dp(8), 0)
+                minHeight = dp(MIN_STATUS_TOUCH_HEIGHT_DP)
+            }
+            root.addView(
+                batteryView,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP or Gravity.END,
+                ).apply {
+                    topMargin = dp(STATUS_TOP_MARGIN_DP)
+                    marginEnd = dp(STATUS_END_MARGIN_DP)
+                },
+            )
         }
-        root.addView(
-            statusView,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                dp(STATUS_HEIGHT_DP),
-                Gravity.TOP or Gravity.END,
-            ).apply {
-                topMargin = dp(STATUS_TOP_MARGIN_DP)
-                marginEnd = dp(STATUS_END_MARGIN_DP)
-            },
-        )
-        updateTime()
-        updateStatusView()
+        updateClock()
+        updateStatusViews()
         return root
     }
+
+    @Suppress("DEPRECATION")
+    private fun readCurrentBattery(): Intent? =
+        registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
 
     private fun renderDefaultLauncherSection() {
         val container = defaultLauncherContainer ?: return
@@ -1033,11 +1673,12 @@ class MainActivity : Activity() {
 
     private fun registerStatusReceiver() {
         if (statusReceiverRegistered) return
-        updateTime()
+        updateClock()
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_TIME_TICK)
             addAction(Intent.ACTION_TIME_CHANGED)
             addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            addAction(Intent.ACTION_DATE_CHANGED)
             addAction(Intent.ACTION_BATTERY_CHANGED)
         }
         val stickyBattery = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -1056,12 +1697,22 @@ class MainActivity : Activity() {
         statusReceiverRegistered = false
     }
 
-    private fun updateTime() {
-        val formatted = DateFormat.getTimeFormat(this).format(Date())
-        if (formatted != currentTime) {
-            currentTime = formatted
-            updateStatusView()
-        }
+    private fun updateClock() {
+        val now = Date()
+        val formattedTime = HomeClockTimeFormatter.format(now)
+        val formattedDate = DateUtils.formatDateTime(
+            this,
+            now.time,
+            DateUtils.FORMAT_SHOW_DATE or
+                DateUtils.FORMAT_NO_YEAR or
+                DateUtils.FORMAT_ABBREV_MONTH,
+        )
+        val timeChanged = formattedTime != currentTime
+        val dateChanged = formattedDate != currentDate
+        if (!timeChanged && !dateChanged) return
+        currentTime = formattedTime
+        currentDate = formattedDate
+        updateStatusViews()
     }
 
     private fun updateBattery(intent: Intent) {
@@ -1081,22 +1732,44 @@ class MainActivity : Activity() {
         }
         if (batteryText != currentBattery) {
             currentBattery = batteryText
-            updateStatusView()
+            updateStatusViews()
         }
     }
 
-    private fun updateStatusView() {
-        val view = statusView ?: return
+    private fun updateStatusViews() {
         val battery = currentBattery.ifEmpty { getString(R.string.battery_unknown) }
-        val status = getString(R.string.time_battery_format, currentTime, battery)
-        if (view.text.toString() != status) view.text = status
-        view.contentDescription = getString(R.string.status_summary, currentTime, battery)
+        batteryView?.apply {
+            if (text.toString() != battery) text = battery
+            if (currentScreen != Screen.HOME) {
+                contentDescription = getString(R.string.battery_summary, battery)
+            }
+        }
+
+        val showDate = currentScreen == Screen.HOME &&
+            preferences.homeClockMode() == HomeClockMode.DATE_AND_TIME
+        datePrefixView?.apply {
+            visibility = if (showDate) View.VISIBLE else View.GONE
+            val prefix = getString(R.string.clock_date_prefix_format, currentDate)
+            if (text.toString() != prefix) text = prefix
+        }
+        timeView?.let { view ->
+            if (view.text.toString() != currentTime) view.text = currentTime
+        }
+        homeStatusView?.contentDescription = if (showDate) {
+            getString(R.string.home_status_date_summary, currentTime, battery, currentDate)
+        } else {
+            getString(R.string.home_status_summary, currentTime, battery)
+        }
     }
 
     @Suppress("DEPRECATION")
     private fun configureWindow() {
         window.statusBarColor = Color.WHITE
-        window.navigationBarColor = Color.WHITE
+        window.navigationBarColor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Color.WHITE
+        } else {
+            Color.BLACK
+        }
         window.attributes = window.attributes.apply { windowAnimations = 0 }
     }
 
@@ -1210,11 +1883,14 @@ class MainActivity : Activity() {
     private fun sectionHeading(text: CharSequence): TextView =
         plainText(text, SECTION_TEXT_SIZE_SP).apply {
             setTypeface(typeface, Typeface.BOLD)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                isAccessibilityHeading = true
+            }
         }
 
     private fun actionButton(text: CharSequence, onClick: () -> Unit): Button = Button(this).apply {
         this.text = text
-        setTextColor(Color.BLACK)
+        setTextColor(buttonTextColors())
         setTextSize(TypedValue.COMPLEX_UNIT_SP, BUTTON_TEXT_SIZE_SP)
         isAllCaps = false
         includeFontPadding = false
@@ -1227,24 +1903,57 @@ class MainActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
+    private fun buttonTextColors(): ColorStateList = ColorStateList(
+        arrayOf(
+            intArrayOf(-android.R.attr.state_enabled),
+            intArrayOf(android.R.attr.state_selected),
+            StateSet.WILD_CARD,
+        ),
+        intArrayOf(DISABLED_INK_COLOR, Color.WHITE, Color.BLACK),
+    )
+
     private fun outlinedButtonBackground(): StateListDrawable = StateListDrawable().apply {
-        addState(intArrayOf(android.R.attr.state_pressed), whiteRectangle(strokeWidthDp = 2))
-        addState(intArrayOf(android.R.attr.state_focused), whiteRectangle(strokeWidthDp = 2))
+        addState(
+            intArrayOf(-android.R.attr.state_enabled),
+            whiteRectangle(strokeWidthDp = 1, strokeColor = DISABLED_INK_COLOR),
+        )
+        addState(intArrayOf(android.R.attr.state_selected), filledRectangle(Color.BLACK))
+        addState(intArrayOf(android.R.attr.state_pressed), whiteRectangle(strokeWidthDp = 3))
+        addState(intArrayOf(android.R.attr.state_focused), whiteRectangle(strokeWidthDp = 3))
         addState(StateSet.WILD_CARD, whiteRectangle(strokeWidthDp = 1))
     }
 
     private fun focusOnlyBackground(): StateListDrawable = StateListDrawable().apply {
-        addState(intArrayOf(android.R.attr.state_pressed), whiteRectangle(strokeWidthDp = 2))
-        addState(intArrayOf(android.R.attr.state_focused), whiteRectangle(strokeWidthDp = 2))
+        addState(intArrayOf(android.R.attr.state_pressed), whiteRectangle(strokeWidthDp = 3))
+        addState(intArrayOf(android.R.attr.state_focused), whiteRectangle(strokeWidthDp = 3))
         addState(StateSet.WILD_CARD, ColorDrawable(Color.WHITE))
     }
 
-    private fun whiteRectangle(strokeWidthDp: Int): GradientDrawable = GradientDrawable().apply {
+    private fun whiteRectangle(
+        strokeWidthDp: Int,
+        strokeColor: Int = Color.BLACK,
+    ): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         setColor(Color.WHITE)
-        setStroke(dp(strokeWidthDp), Color.BLACK)
+        setStroke(dp(strokeWidthDp), strokeColor)
         cornerRadius = 0f
     }
+
+    private fun filledRectangle(color: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        setColor(color)
+        cornerRadius = 0f
+    }
+
+    private fun weightedTypeface(weight: Int): Typeface =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Typeface.create(Typeface.SANS_SERIF, weight, false)
+        } else {
+            Typeface.create(
+                Typeface.SANS_SERIF,
+                if (weight >= 600) Typeface.BOLD else Typeface.NORMAL,
+            )
+        }
 
     private fun verticalSpace(heightDp: Int): View = View(this).apply {
         setBackgroundColor(Color.WHITE)
@@ -1275,6 +1984,10 @@ class MainActivity : Activity() {
         (value * resources.displayMetrics.density).toInt()
 
     private fun clearManagementReferences() {
+        renameDialog?.dismiss()
+        renameDialog = null
+        renameDialogInput = null
+        renameDialogComponent = null
         selectedContainer = null
         selectedCountView = null
         availableContainer = null
@@ -1282,13 +1995,24 @@ class MainActivity : Activity() {
         previousPageButton = null
         nextPageButton = null
         defaultLauncherContainer = null
+        firstRunHintView = null
         homeTextSizeValueView = null
-        decreaseHomeTextSizeButton = null
-        increaseHomeTextSizeButton = null
+        displayPresetButtons.clear()
+        homeClockModeButtons.clear()
         updateContainer = null
+        cachedApps = emptyList()
+    }
+
+    private fun clearHomeReferences() {
         homeRoot = null
         homeErrorView = null
-        cachedApps = emptyList()
+        homeAppsContainer = null
+        homePagerSpacingView = null
+        homePageIndicatorView = null
+        previousHomePageButton = null
+        nextHomePageButton = null
+        homePageCount = 1
+        homeApps = emptyList()
     }
 
     private enum class Screen {
@@ -1315,24 +2039,41 @@ class MainActivity : Activity() {
         const val AVAILABLE_PAGE_SIZE = 6
         const val UPDATE_CACHE_DIRECTORY = "updates"
         const val UPDATE_THREAD_NAME = "EInkLauncherUpdate"
+        const val STATE_SCREEN = "state_screen"
+        const val STATE_HOME_PAGE = "state_home_page"
+        const val STATE_AVAILABLE_PAGE = "state_available_page"
+        const val STATE_RENAME_COMPONENT = "state_rename_component"
+        const val STATE_RENAME_DRAFT = "state_rename_draft"
 
         const val HOME_SIDE_MARGIN_DP = 40
         const val HOME_MAX_WIDTH_DP = 420
-        const val HOME_ROW_HEIGHT_DP = 52
+        const val HOME_ROW_SPACING_DP = 4
+        const val HOME_CONTENT_TOP_RESERVE_DP = 96
+        const val HOME_CONTENT_BOTTOM_RESERVE_DP = 20
+        const val HOME_PAGER_TOP_SPACING_DP = 8
         const val MANAGEMENT_SIDE_MARGIN_DP = 24
         const val MANAGEMENT_TOP_MARGIN_DP = 56
+        const val MANAGEMENT_CONTENT_TOP_MARGIN_DP = 112
         const val MANAGEMENT_ROW_HEIGHT_DP = 48
-        const val STATUS_HEIGHT_DP = 48
+        const val MIN_STATUS_TOUCH_HEIGHT_DP = 48
         const val STATUS_TOP_MARGIN_DP = 4
         const val STATUS_END_MARGIN_DP = 20
+        const val STATUS_HORIZONTAL_PADDING_DP = 8
+        const val STATUS_CLOCK_TOP_SPACING_DP = 2
         const val ACTION_HEIGHT_DP = 48
         const val MANAGEMENT_LONG_PRESS_DURATION_MS = 1_000L
+        const val RENAME_DIALOG_MAX_WIDTH_DP = 520
+        const val RENAME_DIALOG_SIDE_MARGIN_DP = 24
+        const val DISABLED_INK_COLOR = -10_066_330
+        const val HOME_TEXT_LINE_HEIGHT_FACTOR = 1.3f
 
         const val HOME_EMPTY_TEXT_SIZE_SP = 23f
         const val TITLE_TEXT_SIZE_SP = 24f
         const val SECTION_TEXT_SIZE_SP = 18f
         const val BODY_TEXT_SIZE_SP = 16f
-        const val STATUS_TEXT_SIZE_SP = 15f
+        const val DATE_TEXT_SIZE_SP = 16f
+        const val TIME_TEXT_SIZE_SP = 18f
+        const val BATTERY_TEXT_SIZE_SP = 15f
         const val SMALL_TEXT_SIZE_SP = 14f
         const val BUTTON_TEXT_SIZE_SP = 14f
     }

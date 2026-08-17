@@ -1,6 +1,6 @@
 package com.sousoulab.einklauncher
 
-/** Bounds the persisted home app text size. */
+/** Bounds legacy free-form sizes so upgrades never silently reduce an accessibility choice. */
 internal object HomeTextSizePolicy {
     const val MIN_SP = 19
     const val DEFAULT_SP = 23

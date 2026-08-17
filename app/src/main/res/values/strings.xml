@@ -1,21 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">E-Ink Launcher</string>
-    <string name="time_battery_format">"%1$s   %2$s"</string>
     <string name="battery_percentage">%1$d%%</string>
     <string name="battery_charging">%1$d%%+</string>
     <string name="battery_unknown">--%</string>
-    <string name="status_summary">Time %1$s, battery %2$s. Long press to manage apps.</string>
+    <string name="clock_date_prefix_format">"%1$s · "</string>
+    <string name="battery_summary">Battery %1$s.</string>
+    <string name="home_status_summary">Time %1$s, battery %2$s. Tap to open settings.</string>
+    <string name="home_status_date_summary">Time %1$s, battery %2$s, date %3$s. Tap to open settings.</string>
 
     <string name="no_apps_title">No apps selected</string>
     <string name="add_apps">Add apps</string>
-    <string name="manage_apps_title">Manage apps</string>
+    <string name="settings_title">Settings</string>
     <string name="done">Done</string>
     <string name="selected_apps">Selected</string>
-    <string name="home_app_text_size">Home app text size</string>
-    <string name="decrease_text_size">Smaller</string>
-    <string name="increase_text_size">Larger</string>
-    <string name="home_text_size_value">Current: %1$d sp</string>
+    <string name="selected_apps_hint">Tap an app name to set a shorter home label.</string>
+    <string name="home_display_preset">Home display</string>
+    <string name="home_display_preset_summary">Selected: %1$s · %2$d sp. Row height and weight are optimized together.</string>
+    <string name="home_display_legacy_summary">Current custom size: %1$d sp. It is preserved until you choose a preset.</string>
+    <string name="display_preset_compact">Compact</string>
+    <string name="display_preset_comfortable">Comfort</string>
+    <string name="display_preset_large">Large</string>
+    <string name="display_preset_option">Use %1$s display</string>
+    <string name="display_preset_selected">%1$s display, selected</string>
+    <string name="home_clock_mode_title">Home clock</string>
+    <string name="home_clock_time_only">Time only</string>
+    <string name="home_clock_date_and_time">Date and time</string>
+    <string name="home_clock_mode_option">Show %1$s on Home</string>
+    <string name="home_clock_mode_selected">%1$s, selected</string>
     <string name="available_apps">Available apps</string>
     <string name="previous_page">Previous</string>
     <string name="next_page">Next</string>
@@ -23,14 +35,27 @@
     <string name="move_down">Down</string>
     <string name="remove">Remove</string>
     <string name="add">Add</string>
-    <string name="unable_to_open_app">Unable to open this app.</string>
+    <string name="unable_to_open_app">Unable to open %1$s.</string>
+    <string name="open_app">Open %1$s</string>
     <string name="app_unavailable">This app is no longer available.</string>
     <string name="page_indicator">Page %1$d of %2$d</string>
     <string name="selected_count">%1$d of 8 selected</string>
+    <string name="no_selected_apps_hint">No home apps yet. Add at least one below.</string>
+    <string name="no_available_apps">No more launchable apps are available.</string>
+    <string name="available_page_indicator">%1$d–%2$d of %3$d · %4$d/%5$d</string>
     <string name="move_app_up">Move %1$s up</string>
     <string name="move_app_down">Move %1$s down</string>
     <string name="remove_app">Remove %1$s</string>
     <string name="add_app">Add %1$s</string>
+    <string name="rename_app">Rename %1$s</string>
+    <string name="rename_app_title">Home app name</string>
+    <string name="system_app_name">System name: %1$s</string>
+    <string name="app_alias_input">Custom home app name</string>
+    <string name="restore_system_name">Use system name</string>
+    <string name="save">Save</string>
+    <string name="app_name_restored">Restored the system name %1$s.</string>
+    <string name="app_name_saved">Home app name saved as %1$s.</string>
+    <string name="selection_full_short">Full</string>
 
     <string name="updates_title">Updates</string>
     <string name="current_version">Installed version: %1$s</string>
@@ -51,6 +76,7 @@
     <string name="default_launcher_explanation">Set E-Ink Launcher as the default Home app to use it when the device starts or when you press Home.</string>
     <string name="choose_default_launcher">Choose default Home app</string>
     <string name="default_launcher_already_set">E-Ink Launcher is already the default Home app.</string>
-    <string name="first_run_hint">Choose up to 8 apps. Later, long press any empty area or the time and battery text to manage them.</string>
+    <string name="first_run_hint">Choose 1 to 8 apps. Later, tap the top status area or long press an empty area to change settings.</string>
+    <string name="first_run_selection_required">Choose at least one app before finishing setup.</string>
     <string name="default_role_unavailable">Choose E-Ink Launcher from the system Home app settings.</string>
 </resources>

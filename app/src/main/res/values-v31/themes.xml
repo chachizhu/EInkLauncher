@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.EInkLauncher" parent="@style/BaseThemeEInkLauncher">
+        <item name="android:navigationBarColor">@color/paper_white</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:forceDarkAllowed">false</item>
         <item name="android:windowSplashScreenBackground">@color/paper_white</item>
