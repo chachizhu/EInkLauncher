@@ -24,7 +24,6 @@ import android.os.Bundle
 import android.provider.Settings
 import android.text.InputFilter
 import android.text.TextUtils
-import android.text.format.DateUtils
 import android.util.StateSet
 import android.util.TypedValue
 import android.view.Gravity
@@ -98,10 +97,10 @@ class MainActivity : Activity() {
     private var currentTime = ""
     private var currentDate = ""
     private var currentBattery = ""
+    private var currentCharging = false
     private var currentWifi: WifiIndicator = WifiIndicator.HIDDEN
     private var statusReceiverRegistered = false
 
-    private val interRegular: Typeface by lazy { assetTypeface(INTER_REGULAR_ASSET_PATH) }
     private val interSemiBold: Typeface by lazy { assetTypeface(INTER_SEMI_BOLD_ASSET_PATH) }
 
     private var installedVersionName = "?"
@@ -1564,9 +1563,9 @@ class MainActivity : Activity() {
                 minimumHeight = dp(MIN_STATUS_TOUCH_HEIGHT_DP)
                 layoutDirection = View.LAYOUT_DIRECTION_LTR
             }
-            datePrefixView = plainText("", DATE_TEXT_SIZE_SP).apply {
+            datePrefixView = plainText("", TIME_TEXT_SIZE_SP).apply {
                 gravity = Gravity.END
-                typeface = interRegular
+                typeface = interSemiBold
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -1580,7 +1579,7 @@ class MainActivity : Activity() {
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
-            batteryView = plainText("", BATTERY_TEXT_SIZE_SP).apply {
+            batteryView = plainText("", TIME_TEXT_SIZE_SP).apply {
                 typeface = interSemiBold
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
@@ -1591,7 +1590,7 @@ class MainActivity : Activity() {
             status.addView(timeView, linearWrapParams())
             status.addView(
                 wifiView,
-                LinearLayout.LayoutParams(dp(STATUS_ICON_SIZE_DP), dp(STATUS_ICON_SIZE_DP)).apply {
+                LinearLayout.LayoutParams(dp(TIME_ICON_SIZE_DP), dp(TIME_ICON_SIZE_DP)).apply {
                     marginStart = dp(STATUS_ITEM_SPACING_DP)
                 },
             )
@@ -1615,7 +1614,7 @@ class MainActivity : Activity() {
                 },
             )
         } else {
-            batteryView = plainText("", BATTERY_TEXT_SIZE_SP).apply {
+            batteryView = plainText("", TIME_TEXT_SIZE_SP).apply {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.END
                 typeface = interSemiBold
                 setPadding(dp(8), 0, dp(8), 0)
@@ -1763,13 +1762,7 @@ class MainActivity : Activity() {
     private fun updateClock() {
         val now = Date()
         val formattedTime = HomeClockTimeFormatter.format(now)
-        val formattedDate = DateUtils.formatDateTime(
-            this,
-            now.time,
-            DateUtils.FORMAT_SHOW_DATE or
-                DateUtils.FORMAT_NO_YEAR or
-                DateUtils.FORMAT_ABBREV_MONTH,
-        )
+        val formattedDate = HomeClockDateFormatter.format(now)
         val timeChanged = formattedTime != currentTime
         val dateChanged = formattedDate != currentDate
         if (!timeChanged && !dateChanged) return
@@ -1781,20 +1774,19 @@ class MainActivity : Activity() {
     private fun updateBattery(intent: Intent) {
         val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
         val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        val charging: Boolean
         val batteryText = if (level < 0 || scale <= 0) {
+            charging = false
             getString(R.string.battery_unknown)
         } else {
             val percentage = ((level * 100f) / scale).toInt().coerceIn(0, 100)
             val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-            val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                status == BatteryManager.BATTERY_STATUS_FULL
-            getString(
-                if (charging) R.string.battery_charging else R.string.battery_percentage,
-                percentage,
-            )
+            charging = status == BatteryManager.BATTERY_STATUS_CHARGING
+            getString(R.string.battery_percentage, percentage)
         }
-        if (batteryText != currentBattery) {
+        if (batteryText != currentBattery || charging != currentCharging) {
             currentBattery = batteryText
+            currentCharging = charging
             updateStatusViews()
         }
     }
@@ -1814,10 +1806,16 @@ class MainActivity : Activity() {
 
     private fun updateStatusViews() {
         val battery = currentBattery.ifEmpty { getString(R.string.battery_unknown) }
+        val batterySpoken = if (currentCharging) {
+            getString(R.string.battery_charging_note, battery)
+        } else {
+            battery
+        }
         batteryView?.apply {
             if (text.toString() != battery) text = battery
+            renderChargingIcon()
             if (currentScreen != Screen.HOME) {
-                contentDescription = getString(R.string.battery_summary, battery)
+                contentDescription = getString(R.string.battery_summary, batterySpoken)
             }
         }
 
@@ -1849,13 +1847,33 @@ class MainActivity : Activity() {
             getString(
                 R.string.home_status_date_summary,
                 currentTime,
-                battery,
+                batterySpoken,
                 wifiSummary,
                 currentDate,
             )
         } else {
-            getString(R.string.home_status_summary, currentTime, battery, wifiSummary)
+            getString(R.string.home_status_summary, currentTime, batterySpoken, wifiSummary)
         }
+    }
+
+    /**
+     * Shows a small bolt after the percentage only while the battery is really
+     * charging. Only touches the compound drawable when the state flips so
+     * e-ink refreshes stay minimal.
+     */
+    private fun TextView.renderChargingIcon() {
+        val hasIcon = compoundDrawablesRelative[2] != null
+        if (hasIcon == currentCharging) return
+        compoundDrawablePadding = dp(CHARGING_ICON_PADDING_DP)
+        val icon = if (currentCharging) {
+            context.getDrawable(R.drawable.ic_battery_charging)?.mutate()?.apply {
+                val size = dp(CHARGING_ICON_SIZE_DP)
+                setBounds(0, 0, size, size)
+            }
+        } else {
+            null
+        }
+        setCompoundDrawablesRelative(null, null, icon, null)
     }
 
     @Suppress("DEPRECATION")
@@ -2093,7 +2111,9 @@ class MainActivity : Activity() {
         const val STATUS_TOP_MARGIN_DP = 4
         const val STATUS_END_MARGIN_DP = 20
         const val STATUS_HORIZONTAL_PADDING_DP = 8
-        const val STATUS_ICON_SIZE_DP = 16
+        const val TIME_ICON_SIZE_DP = 22
+        const val CHARGING_ICON_SIZE_DP = 14
+        const val CHARGING_ICON_PADDING_DP = 3
         const val STATUS_ITEM_SPACING_DP = 10
         const val ACTION_HEIGHT_DP = 48
         const val RENAME_DIALOG_MAX_WIDTH_DP = 520
@@ -2101,16 +2121,13 @@ class MainActivity : Activity() {
         const val DISABLED_INK_COLOR = -10_066_330
         const val WIFI_DIM_INK_COLOR = -7_829_368
         const val HOME_TEXT_LINE_HEIGHT_FACTOR = 1.3f
-        const val INTER_REGULAR_ASSET_PATH = "fonts/Inter-Regular.ttf"
         const val INTER_SEMI_BOLD_ASSET_PATH = "fonts/Inter-SemiBold.ttf"
 
         const val HOME_EMPTY_TEXT_SIZE_SP = 23f
         const val TITLE_TEXT_SIZE_SP = 24f
         const val SECTION_TEXT_SIZE_SP = 18f
         const val BODY_TEXT_SIZE_SP = 16f
-        const val DATE_TEXT_SIZE_SP = 13f
         const val TIME_TEXT_SIZE_SP = 22f
-        const val BATTERY_TEXT_SIZE_SP = 14f
         const val SMALL_TEXT_SIZE_SP = 14f
         const val BUTTON_TEXT_SIZE_SP = 14f
     }

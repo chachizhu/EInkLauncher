@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">E-Ink Launcher</string>
     <string name="battery_percentage">%1$d%%</string>
-    <string name="battery_charging">%1$d%%+</string>
+    <string name="battery_charging_note">%1$s (charging)</string>
     <string name="battery_unknown">--%</string>
     <string name="clock_date_prefix_format">"%1$s · "</string>
     <string name="battery_summary">Battery %1$s.</string>
