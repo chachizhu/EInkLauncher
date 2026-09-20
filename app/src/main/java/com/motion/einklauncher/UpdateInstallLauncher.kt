@@ -1,4 +1,4 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 import android.content.Context
 import android.content.Intent

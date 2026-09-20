@@ -1,4 +1,4 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 import java.net.URI
 
@@ -20,14 +20,14 @@ internal data class UpdateAsset(
 /** Pure validation rules for version tags and release assets. */
 internal object UpdatePolicy {
     const val LATEST_RELEASE_URL =
-        "https://github.com/TaoZang/EInkLauncher/releases/latest"
+        "https://github.com/chachizhu/EInkLauncher/releases/latest"
     const val UNKNOWN_ASSET_SIZE_BYTES = -1L
     const val MAX_APK_BYTES = 32L * 1024L * 1024L
 
     private const val RELEASE_DOWNLOAD_PATH_PREFIX =
-        "/TaoZang/EInkLauncher/releases/download/"
+        "/chachizhu/EInkLauncher/releases/download/"
     private const val RELEASE_PAGE_PATH_PREFIX =
-        "/TaoZang/EInkLauncher/releases/tag/"
+        "/chachizhu/EInkLauncher/releases/tag/"
     private val versionPattern = Regex("^[vV]?(\\d+)\\.(\\d+)\\.(\\d+)$")
     private val sha256Pattern = Regex("^[0-9a-fA-F]{64}$")
 

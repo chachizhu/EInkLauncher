@@ -1,4 +1,4 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 /** Stable choices for the date and time content shown in the home status area. */
 internal enum class HomeClockMode(val storageValue: String) {

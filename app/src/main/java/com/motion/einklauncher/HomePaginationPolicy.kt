@@ -1,4 +1,4 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 /** Pure layout policy for fitting home-screen app rows into discrete pages. */
 internal object HomePaginationPolicy {

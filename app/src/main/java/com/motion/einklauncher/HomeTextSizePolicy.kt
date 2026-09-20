@@ -1,4 +1,4 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 /** Bounds legacy free-form sizes so upgrades never silently reduce an accessibility choice. */
 internal object HomeTextSizePolicy {

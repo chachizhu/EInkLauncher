@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,11 +15,11 @@ val configuredVersionName = providers.gradleProperty("versionName")
     .get()
 
 android {
-    namespace = "com.sousoulab.einklauncher"
+    namespace = "com.motion.einklauncher"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.sousoulab.einklauncher"
+        applicationId = "com.motion.einklauncher"
         minSdk = 21
         targetSdk = 33
         versionCode = configuredVersionCode
@@ -41,10 +43,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
+    
     buildFeatures {
         buildConfig = false
     }
@@ -58,6 +57,12 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 

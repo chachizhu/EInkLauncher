@@ -1,6 +1,5 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.ActivityOptions
 import android.app.Dialog
@@ -17,6 +16,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
+import android.net.ConnectivityManager
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
@@ -28,9 +29,7 @@ import android.util.StateSet
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
-import android.view.MotionEvent
 import android.view.View
-import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -40,6 +39,7 @@ import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -51,6 +51,7 @@ class MainActivity : Activity() {
     private lateinit var appsRepository: LaunchableAppsRepository
     private lateinit var updateVerifier: UpdatePackageVerifier
     private lateinit var updateInstaller: SystemUpdateInstaller
+    private lateinit var iconCache: AppIconCache
 
     internal var updateClientFactory: () -> UpdateClient = { GitHubReleaseClient() }
 
@@ -67,7 +68,9 @@ class MainActivity : Activity() {
     private var batteryView: TextView? = null
     private var datePrefixView: TextView? = null
     private var timeView: TextView? = null
+    private var wifiView: ImageView? = null
     private var homeStatusView: LinearLayout? = null
+    private var homeManagementButton: ImageView? = null
     private var homeAppsContainer: LinearLayout? = null
     private var homePagerSpacingView: View? = null
     private var homePageIndicatorView: TextView? = null
@@ -95,7 +98,11 @@ class MainActivity : Activity() {
     private var currentTime = ""
     private var currentDate = ""
     private var currentBattery = ""
+    private var currentWifi: WifiIndicator = WifiIndicator.HIDDEN
     private var statusReceiverRegistered = false
+
+    private val interRegular: Typeface by lazy { assetTypeface(INTER_REGULAR_ASSET_PATH) }
+    private val interSemiBold: Typeface by lazy { assetTypeface(INTER_SEMI_BOLD_ASSET_PATH) }
 
     private var installedVersionName = "?"
     private var updateState = UpdateState.IDLE
@@ -115,6 +122,9 @@ class MainActivity : Activity() {
                 Intent.ACTION_TIMEZONE_CHANGED,
                 Intent.ACTION_DATE_CHANGED,
                 -> updateClock()
+                WifiManager.WIFI_STATE_CHANGED_ACTION,
+                WifiManager.NETWORK_STATE_CHANGED_ACTION,
+                -> updateWifiState()
             }
         }
     }
@@ -126,6 +136,7 @@ class MainActivity : Activity() {
         appsRepository = LaunchableAppsRepository(this)
         updateVerifier = UpdatePackageVerifier(this)
         updateInstaller = SystemUpdateInstaller(this)
+        iconCache = AppIconCache(this)
         installedVersionName = try {
             updateVerifier.currentVersionName()
         } catch (_: UpdateException) {
@@ -320,9 +331,6 @@ class MainActivity : Activity() {
         val root = createBaseScreen()
         homeRoot = root
         homeErrorView = null
-        installDelayedLongPress(root) {
-            showManagement(isFirstRun = false)
-        }
 
         homeApps = appsRepository.loadApps(preferences.selectedComponents())
         val content = LinearLayout(this).apply {
@@ -371,7 +379,7 @@ class MainActivity : Activity() {
                     resources.displayMetrics.widthPixels - dp(HOME_SIDE_MARGIN_DP * 2),
                 ).coerceAtLeast(0),
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.START or Gravity.CENTER_VERTICAL,
+                Gravity.START or Gravity.TOP,
             ).apply {
                 marginStart = dp(HOME_SIDE_MARGIN_DP)
                 marginEnd = dp(HOME_SIDE_MARGIN_DP)
@@ -379,6 +387,32 @@ class MainActivity : Activity() {
                 bottomMargin = dp(HOME_CONTENT_BOTTOM_RESERVE_DP)
             },
         )
+
+        homeManagementButton = ImageView(this).apply {
+            setImageResource(R.drawable.ic_settings)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            isClickable = true
+            isFocusable = true
+            background = focusOnlyBackground()
+            contentDescription = getString(R.string.management_button_description)
+            setOnLongClickListener {
+                showManagement(isFirstRun = false)
+                true
+            }
+        }
+        root.addView(
+            homeManagementButton,
+            FrameLayout.LayoutParams(
+                dp(HOME_MANAGEMENT_BUTTON_SIZE_DP),
+                dp(HOME_MANAGEMENT_BUTTON_SIZE_DP),
+                Gravity.BOTTOM or Gravity.END,
+            ).apply {
+                marginEnd = dp(HOME_SIDE_MARGIN_DP)
+                bottomMargin = dp(HOME_MANAGEMENT_BUTTON_MARGIN_DP)
+            },
+        )
+
         setContentView(root)
         renderHomePage()
         hideSystemStatusBar()
@@ -747,7 +781,11 @@ class MainActivity : Activity() {
         val container = selectedContainer ?: return
         val selected = preferences.selectedComponents()
         val appsByComponent = cachedApps.associateBy { it.componentName }
-        selectedCountView?.text = getString(R.string.selected_count, selected.size)
+        selectedCountView?.text = getString(
+            R.string.selected_count,
+            selected.size,
+            SelectionPolicy.MAX_SELECTED_APPS,
+        )
         container.removeAllViews()
 
         if (selected.isEmpty()) {
@@ -925,6 +963,7 @@ class MainActivity : Activity() {
         val newSelection = transform(oldSelection)
         if (newSelection == oldSelection) return
         preferences.saveSelectedComponents(newSelection)
+        iconCache.warmAsync(newSelection)
         renderSelectedApps()
         renderAvailableApps()
     }
@@ -1396,15 +1435,13 @@ class MainActivity : Activity() {
         app: LaunchableApp,
         preset: DisplayPreset,
         textSizeSp: Int,
-    ): TextView {
+    ): View {
         val displayLabel = preferences.appAlias(app.componentName) ?: app.label
-        return plainText(displayLabel, textSizeSp.toFloat()).apply {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), 0, dp(12), 0)
-            minHeight = dp(preset.homeRowHeightDp)
-            typeface = weightedTypeface(preset.fontWeight)
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
+            minimumHeight = dp(preset.homeRowHeightDp)
             isClickable = true
             isFocusable = true
             background = focusOnlyBackground()
@@ -1427,6 +1464,39 @@ class MainActivity : Activity() {
                 }
             }
         }
+
+        val icon = iconCache.icon(app.componentName)
+        if (icon != null) {
+            val iconSizePx = dp(homeIconSizeDp(preset, textSizeSp))
+            row.addView(
+                ImageView(this).apply {
+                    setImageDrawable(icon)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },
+                LinearLayout.LayoutParams(iconSizePx, iconSizePx).apply {
+                    marginEnd = dp(HOME_ICON_LABEL_SPACING_DP)
+                },
+            )
+        }
+        row.addView(
+            plainText(displayLabel, textSizeSp.toFloat()).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                typeface = weightedTypeface(preset.fontWeight)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        return row
+    }
+
+    /** Icon edge length that tracks the home text size but never inflates the row. */
+    private fun homeIconSizeDp(preset: DisplayPreset, textSizeSp: Int): Int {
+        val fromTextSize = (textSizeSp * HOME_ICON_TEXT_SCALE).toInt()
+        val rowCap = preset.homeRowHeightDp - HOME_ICON_ROW_PADDING_DP
+        return fromTextSize.coerceIn(HOME_ICON_MIN_DP, HOME_ICON_MAX_DP)
+            .coerceAtMost(rowCap.coerceAtLeast(HOME_ICON_MIN_DP))
     }
 
     private fun showHomeLaunchError(appLabel: String) {
@@ -1459,7 +1529,9 @@ class MainActivity : Activity() {
             ).apply {
                 marginStart = dp(HOME_SIDE_MARGIN_DP)
                 marginEnd = dp(HOME_SIDE_MARGIN_DP)
-                bottomMargin = dp(24)
+                bottomMargin = dp(
+                    HOME_MANAGEMENT_BUTTON_SIZE_DP + HOME_MANAGEMENT_BUTTON_MARGIN_DP + 8,
+                )
             },
         )
         panel.isFocusable = true
@@ -1475,13 +1547,14 @@ class MainActivity : Activity() {
         batteryView = null
         datePrefixView = null
         timeView = null
+        wifiView = null
         homeStatusView = null
         if (currentBattery.isEmpty()) readCurrentBattery()?.let(::updateBattery)
 
         if (currentScreen == Screen.HOME) {
             val status = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.END
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.END or Gravity.CENTER_VERTICAL
                 setPadding(
                     dp(STATUS_HORIZONTAL_PADDING_DP),
                     0,
@@ -1489,57 +1562,43 @@ class MainActivity : Activity() {
                     0,
                 )
                 minimumHeight = dp(MIN_STATUS_TOUCH_HEIGHT_DP)
-                isClickable = true
-                isFocusable = true
-                background = focusOnlyBackground()
-                setOnClickListener { showManagement(isFirstRun = false) }
-                accessibilityDelegate = object : View.AccessibilityDelegate() {
-                    override fun onInitializeAccessibilityNodeInfo(
-                        host: View,
-                        info: AccessibilityNodeInfo,
-                    ) {
-                        super.onInitializeAccessibilityNodeInfo(host, info)
-                        info.className = Button::class.java.name
-                    }
-                }
-            }
-            batteryView = plainText("", BATTERY_TEXT_SIZE_SP).apply {
-                gravity = Gravity.END
-                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            }
-            val clockRow = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                isBaselineAligned = true
                 layoutDirection = View.LAYOUT_DIRECTION_LTR
             }
             datePrefixView = plainText("", DATE_TEXT_SIZE_SP).apply {
                 gravity = Gravity.END
-                typeface = weightedTypeface(400)
+                typeface = interRegular
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
             timeView = plainText("", TIME_TEXT_SIZE_SP).apply {
-                gravity = Gravity.END
-                typeface = weightedTypeface(600)
+                typeface = interSemiBold
                 maxLines = 1
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
-            clockRow.addView(
+            wifiView = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            batteryView = plainText("", BATTERY_TEXT_SIZE_SP).apply {
+                typeface = interSemiBold
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            status.addView(
                 datePrefixView,
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
-            clockRow.addView(timeView, linearWrapParams())
-            status.addView(batteryView, linearMatchWrapParams())
+            status.addView(timeView, linearWrapParams())
             status.addView(
-                clockRow,
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ).apply {
-                    topMargin = dp(STATUS_CLOCK_TOP_SPACING_DP)
+                wifiView,
+                LinearLayout.LayoutParams(dp(STATUS_ICON_SIZE_DP), dp(STATUS_ICON_SIZE_DP)).apply {
+                    marginStart = dp(STATUS_ITEM_SPACING_DP)
+                },
+            )
+            status.addView(
+                batteryView,
+                linearWrapParams().apply {
+                    marginStart = dp(STATUS_ITEM_SPACING_DP)
                 },
             )
             homeStatusView = status
@@ -1558,7 +1617,7 @@ class MainActivity : Activity() {
         } else {
             batteryView = plainText("", BATTERY_TEXT_SIZE_SP).apply {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.END
-                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+                typeface = interSemiBold
                 setPadding(dp(8), 0, dp(8), 0)
                 minHeight = dp(MIN_STATUS_TOUCH_HEIGHT_DP)
             }
@@ -1575,6 +1634,7 @@ class MainActivity : Activity() {
             )
         }
         updateClock()
+        updateWifiState()
         updateStatusViews()
         return root
     }
@@ -1674,12 +1734,15 @@ class MainActivity : Activity() {
     private fun registerStatusReceiver() {
         if (statusReceiverRegistered) return
         updateClock()
+        updateWifiState()
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_TIME_TICK)
             addAction(Intent.ACTION_TIME_CHANGED)
             addAction(Intent.ACTION_TIMEZONE_CHANGED)
             addAction(Intent.ACTION_DATE_CHANGED)
             addAction(Intent.ACTION_BATTERY_CHANGED)
+            addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+            addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
         }
         val stickyBattery = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -1736,6 +1799,19 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun updateWifiState() {
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val connectivity =
+            applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        @Suppress("DEPRECATION")
+        val connected =
+            connectivity.getNetworkInfo(ConnectivityManager.TYPE_WIFI)?.isConnected == true
+        val next = WifiIndicatorPolicy.resolve(wifiManager.isWifiEnabled, connected)
+        if (next == currentWifi) return
+        currentWifi = next
+        updateStatusViews()
+    }
+
     private fun updateStatusViews() {
         val battery = currentBattery.ifEmpty { getString(R.string.battery_unknown) }
         batteryView?.apply {
@@ -1755,10 +1831,30 @@ class MainActivity : Activity() {
         timeView?.let { view ->
             if (view.text.toString() != currentTime) view.text = currentTime
         }
+        wifiView?.apply {
+            visibility = if (currentWifi == WifiIndicator.HIDDEN) View.GONE else View.VISIBLE
+            setImageResource(R.drawable.ic_wifi)
+            imageTintList = ColorStateList.valueOf(
+                if (currentWifi == WifiIndicator.ACTIVE) Color.BLACK else WIFI_DIM_INK_COLOR,
+            )
+        }
+        val wifiSummary = getString(
+            when (currentWifi) {
+                WifiIndicator.ACTIVE -> R.string.wifi_summary_connected
+                WifiIndicator.DIM -> R.string.wifi_summary_idle
+                WifiIndicator.HIDDEN -> R.string.wifi_summary_off
+            },
+        )
         homeStatusView?.contentDescription = if (showDate) {
-            getString(R.string.home_status_date_summary, currentTime, battery, currentDate)
+            getString(
+                R.string.home_status_date_summary,
+                currentTime,
+                battery,
+                wifiSummary,
+                currentDate,
+            )
         } else {
-            getString(R.string.home_status_summary, currentTime, battery)
+            getString(R.string.home_status_summary, currentTime, battery, wifiSummary)
         }
     }
 
@@ -1792,82 +1888,6 @@ class MainActivity : Activity() {
                 systemUiFlags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
             } else {
                 systemUiFlags
-            }
-        }
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    private fun installDelayedLongPress(view: View, onLongPress: () -> Unit) {
-        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
-        var downX = 0f
-        var downY = 0f
-        var armed = false
-
-        val trigger = Runnable {
-            if (!armed) return@Runnable
-            armed = false
-            onLongPress()
-        }
-        fun cancelPendingTrigger() {
-            armed = false
-            view.removeCallbacks(trigger)
-        }
-
-        view.isLongClickable = false
-        view.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    cancelPendingTrigger()
-                    downX = event.x
-                    downY = event.y
-                    armed = true
-                    view.postDelayed(trigger, MANAGEMENT_LONG_PRESS_DURATION_MS)
-                }
-
-                MotionEvent.ACTION_MOVE -> {
-                    if (
-                        armed &&
-                        (kotlin.math.abs(event.x - downX) > touchSlop ||
-                            kotlin.math.abs(event.y - downY) > touchSlop)
-                    ) {
-                        cancelPendingTrigger()
-                    }
-                }
-
-                MotionEvent.ACTION_UP,
-                MotionEvent.ACTION_CANCEL,
-                MotionEvent.ACTION_POINTER_DOWN,
-                -> cancelPendingTrigger()
-            }
-            true
-        }
-        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-            override fun onViewAttachedToWindow(attachedView: View) = Unit
-
-            override fun onViewDetachedFromWindow(detachedView: View) {
-                cancelPendingTrigger()
-            }
-        })
-        view.accessibilityDelegate = object : View.AccessibilityDelegate() {
-            override fun onInitializeAccessibilityNodeInfo(
-                host: View,
-                info: AccessibilityNodeInfo,
-            ) {
-                super.onInitializeAccessibilityNodeInfo(host, info)
-                info.isLongClickable = true
-                info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_LONG_CLICK)
-            }
-
-            override fun performAccessibilityAction(
-                host: View,
-                action: Int,
-                arguments: Bundle?,
-            ): Boolean {
-                if (action == AccessibilityNodeInfo.ACTION_LONG_CLICK && host.isEnabled) {
-                    onLongPress()
-                    return true
-                }
-                return super.performAccessibilityAction(host, action, arguments)
             }
         }
     }
@@ -1945,6 +1965,12 @@ class MainActivity : Activity() {
         cornerRadius = 0f
     }
 
+    private fun assetTypeface(path: String): Typeface = try {
+        Typeface.createFromAsset(assets, path)
+    } catch (_: RuntimeException) {
+        Typeface.SANS_SERIF
+    }
+
     private fun weightedTypeface(weight: Int): Typeface =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             Typeface.create(Typeface.SANS_SERIF, weight, false)
@@ -2006,6 +2032,7 @@ class MainActivity : Activity() {
     private fun clearHomeReferences() {
         homeRoot = null
         homeErrorView = null
+        homeManagementButton = null
         homeAppsContainer = null
         homePagerSpacingView = null
         homePageIndicatorView = null
@@ -2048,9 +2075,16 @@ class MainActivity : Activity() {
         const val HOME_SIDE_MARGIN_DP = 40
         const val HOME_MAX_WIDTH_DP = 420
         const val HOME_ROW_SPACING_DP = 4
-        const val HOME_CONTENT_TOP_RESERVE_DP = 96
-        const val HOME_CONTENT_BOTTOM_RESERVE_DP = 20
+        const val HOME_CONTENT_TOP_RESERVE_DP = 64
+        const val HOME_CONTENT_BOTTOM_RESERVE_DP = 72
         const val HOME_PAGER_TOP_SPACING_DP = 8
+        const val HOME_MANAGEMENT_BUTTON_SIZE_DP = 48
+        const val HOME_MANAGEMENT_BUTTON_MARGIN_DP = 20
+        const val HOME_ICON_LABEL_SPACING_DP = 12
+        const val HOME_ICON_TEXT_SCALE = 1.3f
+        const val HOME_ICON_ROW_PADDING_DP = 16
+        const val HOME_ICON_MIN_DP = 20
+        const val HOME_ICON_MAX_DP = 40
         const val MANAGEMENT_SIDE_MARGIN_DP = 24
         const val MANAGEMENT_TOP_MARGIN_DP = 56
         const val MANAGEMENT_CONTENT_TOP_MARGIN_DP = 112
@@ -2059,21 +2093,24 @@ class MainActivity : Activity() {
         const val STATUS_TOP_MARGIN_DP = 4
         const val STATUS_END_MARGIN_DP = 20
         const val STATUS_HORIZONTAL_PADDING_DP = 8
-        const val STATUS_CLOCK_TOP_SPACING_DP = 2
+        const val STATUS_ICON_SIZE_DP = 16
+        const val STATUS_ITEM_SPACING_DP = 10
         const val ACTION_HEIGHT_DP = 48
-        const val MANAGEMENT_LONG_PRESS_DURATION_MS = 1_000L
         const val RENAME_DIALOG_MAX_WIDTH_DP = 520
         const val RENAME_DIALOG_SIDE_MARGIN_DP = 24
         const val DISABLED_INK_COLOR = -10_066_330
+        const val WIFI_DIM_INK_COLOR = -7_829_368
         const val HOME_TEXT_LINE_HEIGHT_FACTOR = 1.3f
+        const val INTER_REGULAR_ASSET_PATH = "fonts/Inter-Regular.ttf"
+        const val INTER_SEMI_BOLD_ASSET_PATH = "fonts/Inter-SemiBold.ttf"
 
         const val HOME_EMPTY_TEXT_SIZE_SP = 23f
         const val TITLE_TEXT_SIZE_SP = 24f
         const val SECTION_TEXT_SIZE_SP = 18f
         const val BODY_TEXT_SIZE_SP = 16f
-        const val DATE_TEXT_SIZE_SP = 16f
-        const val TIME_TEXT_SIZE_SP = 18f
-        const val BATTERY_TEXT_SIZE_SP = 15f
+        const val DATE_TEXT_SIZE_SP = 13f
+        const val TIME_TEXT_SIZE_SP = 22f
+        const val BATTERY_TEXT_SIZE_SP = 14f
         const val SMALL_TEXT_SIZE_SP = 14f
         const val BUTTON_TEXT_SIZE_SP = 14f
     }

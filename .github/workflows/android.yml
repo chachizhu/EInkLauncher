@@ -198,7 +198,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           # This is the public release identity documented in README.md. Changing it is a
           # release-key migration, not a routine CI edit.
-          EXPECTED_SIGNER_SHA256: "EE:85:12:A4:5E:19:BE:9F:15:61:68:4C:02:70:F2:BA:1F:53:02:31:BF:CD:C9:99:3C:5A:9A:03:F7:78:D3:D6"
+          EXPECTED_SIGNER_SHA256: "52:13:03:92:02:AE:7C:F9:7B:52:0E:A8:9E:02:18:2A:89:EC:8B:74:AF:E1:F9:14:FA:95:EE:17:F8:18:9E:A7"
         shell: bash
         run: |
           set -euo pipefail

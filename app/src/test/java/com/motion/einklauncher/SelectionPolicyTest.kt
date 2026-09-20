@@ -1,4 +1,4 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,11 +25,11 @@ class SelectionPolicyTest {
     }
 
     @Test
-    fun `add enforces the eight app limit`() {
+    fun `add enforces the twelve app limit`() {
         val source = (1..SelectionPolicy.MAX_SELECTED_APPS).toList()
 
-        assertEquals(8, SelectionPolicy.MAX_SELECTED_APPS)
-        assertEquals(source, SelectionPolicy.add(source, 9))
+        assertEquals(12, SelectionPolicy.MAX_SELECTED_APPS)
+        assertEquals(source, SelectionPolicy.add(source, 13))
     }
 
     @Test

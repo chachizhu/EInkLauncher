@@ -1,4 +1,4 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,7 +34,7 @@ class UpdatePolicyTest {
         assertEquals(apkName, UpdatePolicy.expectedApkName("v1.2.3"))
         assertEquals("$apkName.sha256", UpdatePolicy.expectedChecksumName("v1.2.3"))
         assertEquals(
-            "https://github.com/TaoZang/EInkLauncher/releases/download/v1.2.3/$apkName",
+            "https://github.com/chachizhu/EInkLauncher/releases/download/v1.2.3/$apkName",
             UpdatePolicy.assetUrl("v1.2.3", apkName),
         )
         assertNull(UpdatePolicy.expectedApkName("v1.2.3-beta"))
@@ -48,16 +48,16 @@ class UpdatePolicyTest {
         assertEquals(
             "v1.2.3",
             UpdatePolicy.releaseTagFromPageUrl(
-                "https://github.com/TaoZang/EInkLauncher/releases/tag/v1.2.3",
+                "https://github.com/chachizhu/EInkLauncher/releases/tag/v1.2.3",
             ),
         )
         val rejectedUrls = listOf(
-            "http://github.com/TaoZang/EInkLauncher/releases/tag/v1.2.3",
+            "http://github.com/chachizhu/EInkLauncher/releases/tag/v1.2.3",
             "https://github.com/SomeoneElse/EInkLauncher/releases/tag/v1.2.3",
-            "https://github.com/TaoZang/EInkLauncher/releases/tag/v1.2.3?download=1",
-            "https://github.com/TaoZang/EInkLauncher/releases/tag/v1.2.3/extra",
-            "https://github.com/TaoZang/EInkLauncher/releases/tag/latest",
-            "https://user@github.com/TaoZang/EInkLauncher/releases/tag/v1.2.3",
+            "https://github.com/chachizhu/EInkLauncher/releases/tag/v1.2.3?download=1",
+            "https://github.com/chachizhu/EInkLauncher/releases/tag/v1.2.3/extra",
+            "https://github.com/chachizhu/EInkLauncher/releases/tag/latest",
+            "https://user@github.com/chachizhu/EInkLauncher/releases/tag/v1.2.3",
         )
         rejectedUrls.forEach { url ->
             assertNull(url, UpdatePolicy.releaseTagFromPageUrl(url))
@@ -67,10 +67,10 @@ class UpdatePolicyTest {
     @Test
     fun `only exact GitHub release asset URLs are allowed`() {
         val apkUrl =
-            "https://github.com/TaoZang/EInkLauncher/releases/download/v1.2.3/$apkName"
+            "https://github.com/chachizhu/EInkLauncher/releases/download/v1.2.3/$apkName"
         val checksumName = "$apkName.sha256"
         val checksumUrl =
-            "https://github.com/TaoZang/EInkLauncher/releases/download/v1.2.3/$checksumName"
+            "https://github.com/chachizhu/EInkLauncher/releases/download/v1.2.3/$checksumName"
 
         assertTrue(UpdatePolicy.isAllowedAssetUrl(apkUrl, "v1.2.3", apkName))
         assertTrue(UpdatePolicy.isAllowedAssetUrl(checksumUrl, "v1.2.3", checksumName))
@@ -79,17 +79,17 @@ class UpdatePolicyTest {
     @Test
     fun `asset URL allowlist rejects transport host path and suffix changes`() {
         val rejectedUrls = listOf(
-            "http://github.com/TaoZang/EInkLauncher/releases/download/v1.2.3/$apkName",
-            "https://github.com.evil.example/TaoZang/EInkLauncher/releases/download/v1.2.3/$apkName",
-            "https://api.github.com/TaoZang/EInkLauncher/releases/download/v1.2.3/$apkName",
+            "http://github.com/chachizhu/EInkLauncher/releases/download/v1.2.3/$apkName",
+            "https://github.com.evil.example/chachizhu/EInkLauncher/releases/download/v1.2.3/$apkName",
+            "https://api.github.com/chachizhu/EInkLauncher/releases/download/v1.2.3/$apkName",
             "https://github.com/SomeoneElse/EInkLauncher/releases/download/v1.2.3/$apkName",
-            "https://github.com/TaoZang/EInkLauncher/releases/download/v1.2.4/$apkName",
-            "https://github.com/TaoZang/EInkLauncher/releases/download/v1.2.3/other.apk",
-            "https://github.com/TaoZang/EInkLauncher/releases/download/v1.2.3/$apkName?raw=1",
-            "https://github.com/TaoZang/EInkLauncher/releases/download/v1.2.3/$apkName#download",
-            "https://user@github.com/TaoZang/EInkLauncher/releases/download/v1.2.3/$apkName",
-            "https://github.com:443/TaoZang/EInkLauncher/releases/download/v1.2.3/$apkName",
-            "https://github.com/TaoZang/EInkLauncher/releases/download/v1.2.3/%45InkLauncher-v1.2.3.apk",
+            "https://github.com/chachizhu/EInkLauncher/releases/download/v1.2.4/$apkName",
+            "https://github.com/chachizhu/EInkLauncher/releases/download/v1.2.3/other.apk",
+            "https://github.com/chachizhu/EInkLauncher/releases/download/v1.2.3/$apkName?raw=1",
+            "https://github.com/chachizhu/EInkLauncher/releases/download/v1.2.3/$apkName#download",
+            "https://user@github.com/chachizhu/EInkLauncher/releases/download/v1.2.3/$apkName",
+            "https://github.com:443/chachizhu/EInkLauncher/releases/download/v1.2.3/$apkName",
+            "https://github.com/chachizhu/EInkLauncher/releases/download/v1.2.3/%45InkLauncher-v1.2.3.apk",
         )
 
         rejectedUrls.forEach { url ->

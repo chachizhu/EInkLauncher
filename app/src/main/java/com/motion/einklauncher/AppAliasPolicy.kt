@@ -1,4 +1,4 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 /** Pure normalization rules for optional, device-local home labels. */
 internal object AppAliasPolicy {

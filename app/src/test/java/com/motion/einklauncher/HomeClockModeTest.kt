@@ -1,4 +1,4 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

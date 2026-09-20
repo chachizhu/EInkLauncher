@@ -1,4 +1,4 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 import java.text.SimpleDateFormat
 import java.util.Date

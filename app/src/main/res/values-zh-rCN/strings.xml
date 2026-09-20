@@ -6,8 +6,12 @@
     <string name="battery_unknown">--%</string>
     <string name="clock_date_prefix_format">"%1$s · "</string>
     <string name="battery_summary">电量 %1$s。</string>
-    <string name="home_status_summary">时间 %1$s，电量 %2$s。轻触可打开设置。</string>
-    <string name="home_status_date_summary">时间 %1$s，电量 %2$s，日期 %3$s。轻触可打开设置。</string>
+    <string name="wifi_summary_connected">Wi-Fi 已连接</string>
+    <string name="wifi_summary_idle">Wi-Fi 已开启未连接</string>
+    <string name="wifi_summary_off">Wi-Fi 已关闭</string>
+    <string name="home_status_summary">时间 %1$s，电量 %2$s，%3$s。</string>
+    <string name="home_status_date_summary">时间 %1$s，电量 %2$s，%3$s，日期 %4$s。</string>
+    <string name="management_button_description">管理设置（长按打开）</string>
 
     <string name="no_apps_title">尚未选择应用</string>
     <string name="add_apps">添加应用</string>
@@ -39,7 +43,7 @@
     <string name="open_app">打开%1$s</string>
     <string name="app_unavailable">此应用当前不可用。</string>
     <string name="page_indicator">第 %1$d 页，共 %2$d 页</string>
-    <string name="selected_count">已选择 %1$d/8</string>
+    <string name="selected_count">已选择 %1$d/%2$d</string>
     <string name="no_selected_apps_hint">主屏尚无应用，请在下方至少添加一个。</string>
     <string name="no_available_apps">没有更多可添加的应用。</string>
     <string name="available_page_indicator">第 %1$d–%2$d 个，共 %3$d 个 · %4$d/%5$d 页</string>
@@ -76,7 +80,7 @@
     <string name="default_launcher_explanation">将墨水桌面设为默认桌面后，设备启动或按下主页键时会回到这里。</string>
     <string name="choose_default_launcher">选择默认桌面</string>
     <string name="default_launcher_already_set">墨水桌面已经是默认桌面。</string>
-    <string name="first_run_hint">请选择 1–8 个应用。以后轻触顶部状态区域，或长按主屏空白处即可修改设置。</string>
+    <string name="first_run_hint">请选择 1–12 个应用。以后长按主屏右下角的设置按钮即可修改设置。</string>
     <string name="first_run_selection_required">请至少选择一个应用再完成设置。</string>
     <string name="default_role_unavailable">请在系统的默认桌面设置中选择墨水桌面。</string>
 </resources>

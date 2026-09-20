@@ -1,8 +1,8 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 /** Pure selection and pagination rules shared by the launcher UI. */
 object SelectionPolicy {
-    const val MAX_SELECTED_APPS = 8
+    const val MAX_SELECTED_APPS = 12
 
     fun <T> add(items: List<T>, item: T): List<T> {
         if (item in items || items.size >= MAX_SELECTED_APPS) return items.toList()

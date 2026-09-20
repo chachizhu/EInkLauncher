@@ -1,4 +1,4 @@
-package com.sousoulab.einklauncher
+package com.motion.einklauncher
 
 import android.app.ActivityOptions
 import android.content.ActivityNotFoundException
