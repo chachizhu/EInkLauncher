@@ -11,7 +11,7 @@ class SelectionPolicyTest {
     fun `add appends a new item without changing the source list`() {
         val source = listOf("Reader", "Files")
 
-        val result = SelectionPolicy.add(source, "Notes")
+        val result = SelectionPolicy.add(source, "Notes", maxSelected = 8)
 
         assertEquals(listOf("Reader", "Files", "Notes"), result)
         assertEquals(listOf("Reader", "Files"), source)
@@ -21,15 +21,15 @@ class SelectionPolicyTest {
     fun `add ignores a duplicate item`() {
         val source = listOf("Reader", "Files")
 
-        assertEquals(source, SelectionPolicy.add(source, "Reader"))
+        assertEquals(source, SelectionPolicy.add(source, "Reader", maxSelected = 8))
     }
 
     @Test
-    fun `add enforces the twelve app limit`() {
-        val source = (1..SelectionPolicy.MAX_SELECTED_APPS).toList()
+    fun `add refuses new items once the caller supplied limit is reached`() {
+        val full = (1..8).toList()
 
-        assertEquals(12, SelectionPolicy.MAX_SELECTED_APPS)
-        assertEquals(source, SelectionPolicy.add(source, 13))
+        assertEquals(full, SelectionPolicy.add(full, 9, maxSelected = 8))
+        assertEquals(full + 9, SelectionPolicy.add(full, 9, maxSelected = 9))
     }
 
     @Test

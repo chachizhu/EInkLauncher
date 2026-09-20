@@ -41,7 +41,6 @@ internal class LaunchableAppsRepository(private val context: Context) {
     /** Resolves only the saved components so returning Home never scans every installed app. */
     fun loadApps(components: List<ComponentName>): List<LaunchableApp> = components
         .distinct()
-        .take(SelectionPolicy.MAX_SELECTED_APPS)
         .let { selectedComponents ->
             val activitiesByPackage = mutableMapOf<String, List<LauncherActivityInfo>>()
             selectedComponents.mapNotNull { component ->

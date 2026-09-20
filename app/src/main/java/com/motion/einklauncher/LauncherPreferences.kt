@@ -11,21 +11,45 @@ internal class LauncherPreferences(
         context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE),
     )
 
+    /**
+     * Stored selections are never truncated: shrinking the grid below the current
+     * selection keeps every app and lets the home screen paginate instead.
+     */
     fun selectedComponents(): List<ComponentName> = preferences
         .getString(KEY_SELECTED_COMPONENTS, null)
         ?.lineSequence()
         ?.mapNotNull { ComponentName.unflattenFromString(it) }
         ?.distinct()
-        ?.take(SelectionPolicy.MAX_SELECTED_APPS)
         ?.toList()
         .orEmpty()
 
     fun saveSelectedComponents(components: List<ComponentName>) {
         val serialized = components
             .distinct()
-            .take(SelectionPolicy.MAX_SELECTED_APPS)
             .joinToString(separator = "\n") { it.flattenToString() }
         preferences.edit().putString(KEY_SELECTED_COMPONENTS, serialized).apply()
+    }
+
+    fun homeGridRows(): Int = HomeGridPolicy.normalizeRows(
+        preferences.getInt(KEY_HOME_GRID_ROWS, HomeGridPolicy.DEFAULT_ROWS),
+    )
+
+    fun homeGridColumns(): Int = HomeGridPolicy.normalizeColumns(
+        preferences.getInt(KEY_HOME_GRID_COLUMNS, HomeGridPolicy.DEFAULT_COLUMNS),
+    )
+
+    fun homeGridCapacity(): Int = homeGridRows() * homeGridColumns()
+
+    fun saveHomeGridRows(rows: Int) {
+        preferences.edit()
+            .putInt(KEY_HOME_GRID_ROWS, HomeGridPolicy.normalizeRows(rows))
+            .apply()
+    }
+
+    fun saveHomeGridColumns(columns: Int) {
+        preferences.edit()
+            .putInt(KEY_HOME_GRID_COLUMNS, HomeGridPolicy.normalizeColumns(columns))
+            .apply()
     }
 
     fun appAlias(component: ComponentName): String? =
@@ -125,6 +149,8 @@ internal class LauncherPreferences(
         const val KEY_HOME_APP_TEXT_SIZE_SP = "home_app_text_size_sp"
         const val KEY_DISPLAY_PRESET = "display_preset"
         const val KEY_HOME_CLOCK_MODE = "home_clock_mode"
+        const val KEY_HOME_GRID_ROWS = "home_grid_rows"
+        const val KEY_HOME_GRID_COLUMNS = "home_grid_columns"
         const val KEY_APP_ALIAS_PREFIX = "app_alias."
     }
 }

@@ -27,6 +27,14 @@
     <string name="display_preset_large">Large</string>
     <string name="display_preset_option">Use %1$s display</string>
     <string name="display_preset_selected">%1$s display, selected</string>
+    <string name="home_grid_title">Home layout</string>
+    <string name="home_grid_rows">Rows</string>
+    <string name="home_grid_columns">Columns</string>
+    <string name="home_grid_decrease">Decrease %1$s</string>
+    <string name="home_grid_increase">Increase %1$s</string>
+    <string name="home_grid_summary">%1$d rows × %2$d columns per page · up to %3$d apps</string>
+    <string name="decrease_symbol">-</string>
+    <string name="increase_symbol">+</string>
     <string name="home_clock_mode_title">Home clock</string>
     <string name="home_clock_time_only">Time only</string>
     <string name="home_clock_date_and_time">Date and time</string>

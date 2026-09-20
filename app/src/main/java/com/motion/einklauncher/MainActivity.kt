@@ -84,6 +84,7 @@ class MainActivity : Activity() {
     private var defaultLauncherContainer: LinearLayout? = null
     private var firstRunHintView: TextView? = null
     private var homeTextSizeValueView: TextView? = null
+    private var homeGridContainer: LinearLayout? = null
     private val displayPresetButtons = mutableMapOf<DisplayPreset, Button>()
     private val homeClockModeButtons = mutableMapOf<HomeClockMode, Button>()
     private var updateContainer: LinearLayout? = null
@@ -370,15 +371,22 @@ class MainActivity : Activity() {
         content.addView(homePagerSpacingView)
         content.addView(pagination, linearMatchWrapParams())
 
+        val contentMaxWidthPx = dp(
+            HomeGridPolicy.contentMaxWidthDp(
+                columns = preferences.homeGridColumns(),
+                columnWidthDp = HOME_MAX_COLUMN_WIDTH_DP,
+                columnSpacingDp = HOME_COLUMN_SPACING_DP,
+            ),
+        )
         root.addView(
             content,
             FrameLayout.LayoutParams(
                 minOf(
-                    dp(HOME_MAX_WIDTH_DP),
+                    contentMaxWidthPx,
                     resources.displayMetrics.widthPixels - dp(HOME_SIDE_MARGIN_DP * 2),
                 ).coerceAtLeast(0),
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.START or Gravity.TOP,
+                Gravity.CENTER_HORIZONTAL or Gravity.TOP,
             ).apply {
                 marginStart = dp(HOME_SIDE_MARGIN_DP)
                 marginEnd = dp(HOME_SIDE_MARGIN_DP)
@@ -420,6 +428,8 @@ class MainActivity : Activity() {
     private fun renderHomePage(requestFocusOnFirstItem: Boolean = false) {
         val container = homeAppsContainer ?: return
         val preset = preferences.displayPreset()
+        val rows = preferences.homeGridRows()
+        val columns = preferences.homeGridColumns()
         val homeTextSizeSp = preferences.homeAppTextSizeSp()
         val homeTextSizePx = TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_SP,
@@ -433,35 +443,14 @@ class MainActivity : Activity() {
             dp(preset.homeRowHeightDp),
             scaledTextHeightPx,
         ) + dp(HOME_ROW_SPACING_DP)
-        val displayHeight = resources.displayMetrics.heightPixels
-        val baseAvailableHeight = (
-            displayHeight -
-                dp(HOME_CONTENT_TOP_RESERVE_DP + HOME_CONTENT_BOTTOM_RESERVE_DP)
-            ).coerceAtLeast(rowHeightPx)
-        var pagination = HomePaginationPolicy.resolve(
-            itemCount = homeApps.size,
-            availableHeightPx = baseAvailableHeight,
-            rowHeightPx = rowHeightPx,
-            requestedPage = homePage,
-        )
-        if (pagination.pageCount > 1) {
-            pagination = HomePaginationPolicy.resolve(
-                itemCount = homeApps.size,
-                availableHeightPx = (
-                    baseAvailableHeight -
-                        dp(ACTION_HEIGHT_DP + HOME_PAGER_TOP_SPACING_DP)
-                    ).coerceAtLeast(rowHeightPx),
-                rowHeightPx = rowHeightPx,
-                requestedPage = homePage,
-            )
-        }
-        homePage = pagination.clampedPage
-        homePageCount = pagination.pageCount
+        val page = SelectionPolicy.page(homeApps, homePage, rows * columns)
+        homePage = page.pageIndex
+        homePageCount = page.pageCount
         container.removeAllViews()
         container.minimumHeight = if (homeApps.isEmpty()) {
             0
         } else {
-            (pagination.pageSize * rowHeightPx - dp(HOME_ROW_SPACING_DP)).coerceAtLeast(0)
+            (rows * rowHeightPx - dp(HOME_ROW_SPACING_DP)).coerceAtLeast(0)
         }
 
         var firstHomeAppView: View? = null
@@ -480,38 +469,55 @@ class MainActivity : Activity() {
                 linearWrapParams(),
             )
         } else {
-            val start = homePage * pagination.pageSize
-            val pageItems = homeApps.drop(start).take(pagination.pageSize)
-            pageItems.forEachIndexed { index, app ->
-                val appView = homeAppButton(app, preset, homeTextSizeSp)
-                if (firstHomeAppView == null) firstHomeAppView = appView
-                container.addView(
-                    appView,
-                    linearMatchWrapParams(),
-                )
-                if (index < pageItems.lastIndex) {
-                    container.addView(verticalSpace(HOME_ROW_SPACING_DP))
+            page.items.chunked(columns).forEachIndexed { rowIndex, rowApps ->
+                if (rowIndex > 0) container.addView(verticalSpace(HOME_ROW_SPACING_DP))
+                val gridRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
                 }
+                rowApps.forEachIndexed { columnIndex, app ->
+                    if (columnIndex > 0) {
+                        gridRow.addView(horizontalSpace(HOME_COLUMN_SPACING_DP))
+                    }
+                    val appView = homeAppButton(app, preset, homeTextSizeSp)
+                    if (firstHomeAppView == null) firstHomeAppView = appView
+                    gridRow.addView(
+                        appView,
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                    )
+                }
+                // Keep cell widths equal when the final row is not completely filled.
+                // Height must be exactly 0: a plain View measured with WRAP_CONTENT inside a
+                // horizontal LinearLayout receives an AT_MOST height spec and getDefaultSize
+                // expands it to the full spec size, inflating the row.
+                repeat(columns - rowApps.size) {
+                    gridRow.addView(horizontalSpace(HOME_COLUMN_SPACING_DP))
+                    gridRow.addView(
+                        View(this),
+                        LinearLayout.LayoutParams(0, 0, 1f),
+                    )
+                }
+                container.addView(gridRow, linearMatchWrapParams())
             }
         }
 
-        val pagerVisible = pagination.pageCount > 1
+        val pagerVisible = page.pageCount > 1
         homePagerSpacingView?.visibility = if (pagerVisible) View.VISIBLE else View.GONE
         homePageIndicatorView?.apply {
             visibility = if (pagerVisible) View.VISIBLE else View.GONE
             text = getString(
                 R.string.page_indicator,
-                pagination.clampedPage + 1,
-                pagination.pageCount,
+                page.pageIndex + 1,
+                page.pageCount,
             )
         }
         previousHomePageButton?.apply {
             visibility = if (pagerVisible) View.VISIBLE else View.GONE
-            isEnabled = pagination.clampedPage > 0
+            isEnabled = page.hasPrevious
         }
         nextHomePageButton?.apply {
             visibility = if (pagerVisible) View.VISIBLE else View.GONE
-            isEnabled = pagination.clampedPage < pagination.pageCount - 1
+            isEnabled = page.hasNext
         }
         if (requestFocusOnFirstItem) firstHomeAppView?.requestFocus()
     }
@@ -640,6 +646,19 @@ class MainActivity : Activity() {
             }
             content.addView(homeTextSizeValueView, linearMatchWrapParams())
             renderHomeTextSizeSetting()
+
+            content.addView(verticalSpace(16))
+            content.addView(
+                sectionHeading(getString(R.string.home_grid_title)),
+                linearMatchWrapParams(),
+            )
+            content.addView(verticalSpace(6))
+            homeGridContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.START
+            }
+            content.addView(homeGridContainer, linearMatchWrapParams())
+            renderHomeGridSetting()
 
             content.addView(verticalSpace(16))
             content.addView(
@@ -783,7 +802,7 @@ class MainActivity : Activity() {
         selectedCountView?.text = getString(
             R.string.selected_count,
             selected.size,
-            SelectionPolicy.MAX_SELECTED_APPS,
+            preferences.homeGridCapacity(),
         )
         container.removeAllViews()
 
@@ -878,6 +897,7 @@ class MainActivity : Activity() {
     private fun renderAvailableApps(requestFocusOnFirstItem: Boolean = false) {
         val container = availableContainer ?: return
         val selected = preferences.selectedComponents()
+        val capacity = preferences.homeGridCapacity()
         val selectedSet = selected.toHashSet()
         val available = cachedApps.filterNot { it.componentName in selectedSet }
         val page = SelectionPolicy.page(available, availablePage, AVAILABLE_PAGE_SIZE)
@@ -897,7 +917,7 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 minimumHeight = dp(MANAGEMENT_ROW_HEIGHT_DP)
-                isClickable = selected.size < SelectionPolicy.MAX_SELECTED_APPS
+                isClickable = selected.size < capacity
                 isFocusable = isClickable
                 if (isClickable) {
                     background = focusOnlyBackground()
@@ -921,7 +941,7 @@ class MainActivity : Activity() {
                     addSelectedApp(app.componentName)
                 }.apply {
                     contentDescription = getString(R.string.add_app, app.label)
-                    isEnabled = selected.size < SelectionPolicy.MAX_SELECTED_APPS
+                    isEnabled = selected.size < capacity
                     if (!isEnabled) text = getString(R.string.selection_full_short)
                 },
                 compactButtonParams(),
@@ -952,9 +972,10 @@ class MainActivity : Activity() {
     }
 
     private fun addSelectedApp(component: ComponentName) {
+        val capacity = preferences.homeGridCapacity()
         val selected = preferences.selectedComponents()
-        if (selected.size >= SelectionPolicy.MAX_SELECTED_APPS) return
-        updateSelection { SelectionPolicy.add(it, component) }
+        if (selected.size >= capacity) return
+        updateSelection { SelectionPolicy.add(it, component, capacity) }
     }
 
     private fun updateSelection(transform: (List<ComponentName>) -> List<ComponentName>) {
@@ -1006,6 +1027,106 @@ class MainActivity : Activity() {
             DisplayPreset.LARGE -> R.string.display_preset_large
         },
     )
+
+    private fun renderHomeGridSetting() {
+        val container = homeGridContainer ?: return
+        val rows = preferences.homeGridRows()
+        val columns = preferences.homeGridColumns()
+        container.removeAllViews()
+        container.addView(
+            homeGridStepperRow(
+                label = getString(R.string.home_grid_rows),
+                value = rows,
+                minValue = HomeGridPolicy.MIN_ROWS,
+                maxValue = HomeGridPolicy.MAX_ROWS,
+                onStep = ::stepHomeGridRows,
+            ),
+            linearMatchWrapParams(),
+        )
+        container.addView(verticalSpace(4))
+        container.addView(
+            homeGridStepperRow(
+                label = getString(R.string.home_grid_columns),
+                value = columns,
+                minValue = HomeGridPolicy.MIN_COLUMNS,
+                maxValue = HomeGridPolicy.MAX_COLUMNS,
+                onStep = ::stepHomeGridColumns,
+            ),
+            linearMatchWrapParams(),
+        )
+        container.addView(verticalSpace(6))
+        container.addView(
+            plainText(
+                getString(R.string.home_grid_summary, rows, columns, rows * columns),
+                SMALL_TEXT_SIZE_SP,
+            ).apply {
+                setLineSpacing(0f, 1.15f)
+            },
+            linearMatchWrapParams(),
+        )
+    }
+
+    private fun homeGridStepperRow(
+        label: String,
+        value: Int,
+        minValue: Int,
+        maxValue: Int,
+        onStep: (Int) -> Unit,
+    ): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(ACTION_HEIGHT_DP)
+        }
+        row.addView(
+            plainText(label, BODY_TEXT_SIZE_SP),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        row.addView(
+            actionButton(getString(R.string.decrease_symbol)) { onStep(-1) }.apply {
+                isEnabled = value > minValue
+                contentDescription = getString(R.string.home_grid_decrease, label)
+            },
+            compactButtonParams(),
+        )
+        row.addView(horizontalSpace(6))
+        row.addView(
+            plainText(value.toString(), BODY_TEXT_SIZE_SP).apply {
+                gravity = Gravity.CENTER
+                minWidth = dp(HOME_GRID_VALUE_WIDTH_DP)
+            },
+            linearWrapParams(),
+        )
+        row.addView(horizontalSpace(6))
+        row.addView(
+            actionButton(getString(R.string.increase_symbol)) { onStep(1) }.apply {
+                isEnabled = value < maxValue
+                contentDescription = getString(R.string.home_grid_increase, label)
+            },
+            compactButtonParams(),
+        )
+        return row
+    }
+
+    private fun stepHomeGridRows(delta: Int) {
+        val current = preferences.homeGridRows()
+        val next = HomeGridPolicy.normalizeRows(current + delta)
+        if (next == current) return
+        preferences.saveHomeGridRows(next)
+        renderHomeGridSetting()
+        renderSelectedApps()
+        renderAvailableApps()
+    }
+
+    private fun stepHomeGridColumns(delta: Int) {
+        val current = preferences.homeGridColumns()
+        val next = HomeGridPolicy.normalizeColumns(current + delta)
+        if (next == current) return
+        preferences.saveHomeGridColumns(next)
+        renderHomeGridSetting()
+        renderSelectedApps()
+        renderAvailableApps()
+    }
 
     private fun updateHomeClockMode(mode: HomeClockMode) {
         if (preferences.homeClockMode() == mode) return
@@ -2041,6 +2162,7 @@ class MainActivity : Activity() {
         defaultLauncherContainer = null
         firstRunHintView = null
         homeTextSizeValueView = null
+        homeGridContainer = null
         displayPresetButtons.clear()
         homeClockModeButtons.clear()
         updateContainer = null
@@ -2091,8 +2213,10 @@ class MainActivity : Activity() {
         const val STATE_RENAME_DRAFT = "state_rename_draft"
 
         const val HOME_SIDE_MARGIN_DP = 40
-        const val HOME_MAX_WIDTH_DP = 420
+        const val HOME_MAX_COLUMN_WIDTH_DP = 420
         const val HOME_ROW_SPACING_DP = 4
+        const val HOME_COLUMN_SPACING_DP = 8
+        const val HOME_GRID_VALUE_WIDTH_DP = 40
         const val HOME_CONTENT_TOP_RESERVE_DP = 64
         const val HOME_CONTENT_BOTTOM_RESERVE_DP = 72
         const val HOME_PAGER_TOP_SPACING_DP = 8

@@ -131,6 +131,75 @@ class LauncherPreferencesTest {
     }
 
     @Test
+    fun `missing grid preference uses the default layout without writing state`() {
+        val store = InMemorySharedPreferences()
+        val preferences = LauncherPreferences(store)
+
+        assertEquals(8, preferences.homeGridRows())
+        assertEquals(1, preferences.homeGridColumns())
+        assertEquals(8, preferences.homeGridCapacity())
+        assertEquals(false, store.contains("home_grid_rows"))
+        assertEquals(false, store.contains("home_grid_columns"))
+    }
+
+    @Test
+    fun `saving grid values normalizes them into the supported bounds`() {
+        val store = InMemorySharedPreferences()
+        val preferences = LauncherPreferences(store)
+
+        preferences.saveHomeGridRows(99)
+        preferences.saveHomeGridColumns(0)
+
+        assertEquals(10, preferences.homeGridRows())
+        assertEquals(1, preferences.homeGridColumns())
+        assertEquals(10, preferences.homeGridCapacity())
+        assertEquals(10, store.getInt("home_grid_rows", -1))
+        assertEquals(1, store.getInt("home_grid_columns", -1))
+
+        preferences.saveHomeGridRows(9)
+        preferences.saveHomeGridColumns(2)
+
+        assertEquals(9, preferences.homeGridRows())
+        assertEquals(2, preferences.homeGridColumns())
+        assertEquals(18, preferences.homeGridCapacity())
+    }
+
+    @Test
+    fun `out of range stored grid values fall back into bounds on read`() {
+        val store = InMemorySharedPreferences(
+            mapOf(
+                "home_grid_rows" to 3,
+                "home_grid_columns" to 5,
+            ),
+        )
+        val preferences = LauncherPreferences(store)
+
+        assertEquals(8, preferences.homeGridRows())
+        assertEquals(2, preferences.homeGridColumns())
+        assertEquals(16, preferences.homeGridCapacity())
+    }
+
+    @Test
+    fun `saving grid values leaves selection and display preferences untouched`() {
+        val selectedApps = "reader.package/.ReaderActivity"
+        val store = InMemorySharedPreferences(
+            mapOf(
+                "selected_components" to selectedApps,
+                "display_preset" to "compact",
+                "home_app_text_size_sp" to 19,
+            ),
+        )
+        val preferences = LauncherPreferences(store)
+
+        preferences.saveHomeGridRows(10)
+        preferences.saveHomeGridColumns(2)
+
+        assertEquals(selectedApps, store.getString("selected_components", null))
+        assertEquals("compact", store.getString("display_preset", null))
+        assertEquals(19, store.getInt("home_app_text_size_sp", -1))
+    }
+
+    @Test
     fun `saving clock modes is independent from selection and display preferences`() {
         val selectedApps = "reader.package/.ReaderActivity"
         val store = InMemorySharedPreferences(
