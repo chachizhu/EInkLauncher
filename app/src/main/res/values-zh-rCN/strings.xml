@@ -12,6 +12,11 @@
     <string name="home_status_summary">时间 %1$s，电量 %2$s，%3$s。</string>
     <string name="home_status_date_summary">时间 %1$s，电量 %2$s，%3$s，日期 %4$s。</string>
     <string name="management_button_description">管理设置（长按打开）</string>
+    <string name="drawer_button_description">全部应用（长按打开）</string>
+    <string name="drawer_title">全部应用</string>
+    <string name="back_to_home">返回主屏</string>
+    <string name="lock_button_description">锁屏（长按）</string>
+    <string name="lock_admin_explanation">墨水桌面需要“强制锁屏”这一项权限，才能在长按锁屏按钮时关闭屏幕。它无法擦除数据、修改密码，也无法执行任何其它设备管理操作。</string>
 
     <string name="no_apps_title">尚未选择应用</string>
     <string name="add_apps">添加应用</string>
@@ -55,11 +60,11 @@
     <string name="no_selected_apps_hint">主屏尚无应用，请在下方至少添加一个。</string>
     <string name="no_available_apps">没有更多可添加的应用。</string>
     <string name="available_page_indicator">第 %1$d–%2$d 个，共 %3$d 个 · %4$d/%5$d 页</string>
-    <string name="move_app_up">上移 %1$s</string>
-    <string name="move_app_down">下移 %1$s</string>
-    <string name="remove_app">移除 %1$s</string>
-    <string name="add_app">添加 %1$s</string>
-    <string name="rename_app">重命名%1$s</string>
+    <string name="move_app_up">上移 %1$s(%2$s)</string>
+    <string name="move_app_down">下移 %1$s(%2$s)</string>
+    <string name="remove_app">移除 %1$s(%2$s)</string>
+    <string name="add_app">添加 %1$s(%2$s)</string>
+    <string name="rename_app">重命名%1$s(%2$s)</string>
     <string name="rename_app_title">主屏应用名称</string>
     <string name="system_app_name">系统名称：%1$s</string>
     <string name="app_alias_input">自定义主屏应用名称</string>
@@ -88,7 +93,7 @@
     <string name="default_launcher_explanation">将墨水桌面设为默认桌面后，设备启动或按下主页键时会回到这里。</string>
     <string name="choose_default_launcher">选择默认桌面</string>
     <string name="default_launcher_already_set">墨水桌面已经是默认桌面。</string>
-    <string name="first_run_hint">请选择 1–12 个应用。以后长按主屏右下角的设置按钮即可修改设置。</string>
+    <string name="first_run_hint">请选择 1–%1$d 个应用。以后长按主屏右下角的设置按钮即可修改设置。</string>
     <string name="first_run_selection_required">请至少选择一个应用再完成设置。</string>
     <string name="default_role_unavailable">请在系统的默认桌面设置中选择墨水桌面。</string>
 </resources>

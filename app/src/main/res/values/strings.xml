@@ -12,6 +12,11 @@
     <string name="home_status_summary">Time %1$s, battery %2$s, %3$s.</string>
     <string name="home_status_date_summary">Time %1$s, battery %2$s, %3$s, date %4$s.</string>
     <string name="management_button_description">Settings (long press to open)</string>
+    <string name="drawer_button_description">All apps (long press to open)</string>
+    <string name="drawer_title">All apps</string>
+    <string name="back_to_home">Back to Home</string>
+    <string name="lock_button_description">Lock screen (long press)</string>
+    <string name="lock_admin_explanation">E-Ink Launcher needs the force-lock permission to switch the screen off when you long press the lock button. It cannot erase data, change your password, or use any other device-management capability.</string>
 
     <string name="no_apps_title">No apps selected</string>
     <string name="add_apps">Add apps</string>
@@ -51,15 +56,16 @@
     <string name="open_app">Open %1$s</string>
     <string name="app_unavailable">This app is no longer available.</string>
     <string name="page_indicator">Page %1$d of %2$d</string>
+    <string name="page_indicator_compact">%1$d / %2$d</string>
     <string name="selected_count">%1$d of %2$d selected</string>
     <string name="no_selected_apps_hint">No home apps yet. Add at least one below.</string>
     <string name="no_available_apps">No more launchable apps are available.</string>
     <string name="available_page_indicator">%1$d–%2$d of %3$d · %4$d/%5$d</string>
-    <string name="move_app_up">Move %1$s up</string>
-    <string name="move_app_down">Move %1$s down</string>
-    <string name="remove_app">Remove %1$s</string>
-    <string name="add_app">Add %1$s</string>
-    <string name="rename_app">Rename %1$s</string>
+    <string name="move_app_up">Move %1$s (%2$s) up</string>
+    <string name="move_app_down">Move %1$s (%2$s) down</string>
+    <string name="remove_app">Remove %1$s (%2$s)</string>
+    <string name="add_app">Add %1$s (%2$s)</string>
+    <string name="rename_app">Rename %1$s (%2$s)</string>
     <string name="rename_app_title">Home app name</string>
     <string name="system_app_name">System name: %1$s</string>
     <string name="app_alias_input">Custom home app name</string>
@@ -88,7 +94,7 @@
     <string name="default_launcher_explanation">Set E-Ink Launcher as the default Home app to use it when the device starts or when you press Home.</string>
     <string name="choose_default_launcher">Choose default Home app</string>
     <string name="default_launcher_already_set">E-Ink Launcher is already the default Home app.</string>
-    <string name="first_run_hint">Choose 1 to 12 apps. Later, long press the settings button at the bottom right of Home to change settings.</string>
+    <string name="first_run_hint">Choose 1 to %1$d apps. Later, long press the settings button at the bottom right of Home to change settings.</string>
     <string name="first_run_selection_required">Choose at least one app before finishing setup.</string>
     <string name="default_role_unavailable">Choose E-Ink Launcher from the system Home app settings.</string>
 </resources>

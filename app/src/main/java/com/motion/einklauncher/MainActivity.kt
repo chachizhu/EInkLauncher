@@ -3,6 +3,7 @@ package com.motion.einklauncher
 import android.app.Activity
 import android.app.ActivityOptions
 import android.app.Dialog
+import android.app.admin.DevicePolicyManager
 import android.app.role.RoleManager
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
@@ -62,28 +63,32 @@ class MainActivity : Activity() {
     private var managementRefreshWhenResumed = false
     private var homeRefreshWhenResumed = false
     private var homePage = 0
-    private var homePageCount = 1
-    private var availablePage = 0
+        private var availablePage = 0
     private var cachedApps: List<LaunchableApp> = emptyList()
     private var homeApps: List<LaunchableApp> = emptyList()
+    private var drawerApps: List<LaunchableApp> = emptyList()
+    private var drawerPage = 0
+    private var drawerRows = AppDrawerPolicy.FALLBACK_ROWS
+    private var drawerHandedOff = false
 
     private var batteryView: TextView? = null
     private var datePrefixView: TextView? = null
     private var timeView: TextView? = null
     private var wifiView: ImageView? = null
-    private var homeStatusView: LinearLayout? = null
+    private var statusView: LinearLayout? = null
     private var homeManagementButton: ImageView? = null
+    private var homeDrawerButton: ImageView? = null
+    private var homeLockButton: ImageView? = null
+    private var drawerRoot: FrameLayout? = null
+    private var drawerGridContainer: LinearLayout? = null
+    private var drawerPager: Pager? = null
     private var homeAppsContainer: LinearLayout? = null
     private var homePagerSpacingView: View? = null
-    private var homePageIndicatorView: TextView? = null
-    private var previousHomePageButton: Button? = null
-    private var nextHomePageButton: Button? = null
+    private var homePager: Pager? = null
     private var selectedContainer: LinearLayout? = null
     private var selectedCountView: TextView? = null
     private var availableContainer: LinearLayout? = null
-    private var pageIndicatorView: TextView? = null
-    private var previousPageButton: Button? = null
-    private var nextPageButton: Button? = null
+    private var availablePager: Pager? = null
     private var defaultLauncherContainer: LinearLayout? = null
     private var firstRunHintView: TextView? = null
     private var homeTextSizeValueView: TextView? = null
@@ -92,7 +97,7 @@ class MainActivity : Activity() {
     private val homeClockModeButtons = mutableMapOf<HomeClockMode, Button>()
     private var updateContainer: LinearLayout? = null
     private var homeRoot: FrameLayout? = null
-    private var homeErrorView: View? = null
+    private var launchErrorView: View? = null
     private var renameDialog: Dialog? = null
     private var renameDialogInput: EditText? = null
     private var renameDialogComponent: ComponentName? = null
@@ -226,13 +231,18 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         hideSystemStatusBar()
+        if (drawerHandedOff && currentScreen == Screen.DRAWER) {
+            drawerHandedOff = false
+            showHome()
+            return
+        }
         if (homeRefreshWhenResumed && currentScreen == Screen.HOME) {
             homeRefreshWhenResumed = false
             refreshHomeAppsIfChanged()
         }
         if (managementRefreshWhenResumed && currentScreen == Screen.MANAGEMENT) {
             managementRefreshWhenResumed = false
-            cachedApps = appsRepository.loadApps()
+            cachedApps = loadAllLaunchableApps()
             renderDefaultLauncherSection()
             renderSelectedApps()
             renderAvailableApps()
@@ -301,15 +311,19 @@ class MainActivity : Activity() {
 
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     override fun onBackPressed() {
-        if (currentScreen == Screen.MANAGEMENT) {
-            if (firstRunManagement) {
-                finishManagement()
-            } else {
-                showHome()
-            }
+        when (currentScreen) {
+            Screen.MANAGEMENT -> if (firstRunManagement) finishManagement() else showHome()
+            Screen.DRAWER -> showHome()
+            // HOME is the root surface: Back intentionally does nothing here.
+            Screen.HOME -> Unit
         }
-        // HOME is the root surface: Back intentionally does nothing here.
     }
+
+    /** Screens that page with the hardware page keys. */
+    private fun isPaginationScreen(): Boolean =
+        currentScreen == Screen.HOME ||
+            currentScreen == Screen.MANAGEMENT ||
+            currentScreen == Screen.DRAWER
 
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -318,20 +332,28 @@ class MainActivity : Activity() {
             KeyEvent.KEYCODE_PAGE_DOWN -> 1
             else -> 0
         }
-        val isPaginationScreen = currentScreen == Screen.HOME || currentScreen == Screen.MANAGEMENT
-        if (pageDelta != 0 && isPaginationScreen) {
+        if (pageDelta != 0 && isPaginationScreen()) {
             if (event?.repeatCount == 0) {
-                if (currentScreen == Screen.HOME) {
-                    changeHomePage(pageDelta, requestFocusOnFirstItem = true)
-                } else {
-                    val canChangePage = if (pageDelta < 0) {
-                        previousPageButton?.isEnabled == true
-                    } else {
-                        nextPageButton?.isEnabled == true
+                when (currentScreen) {
+                    Screen.HOME -> changeHomePage(pageDelta, requestFocusOnFirstItem = true)
+                    Screen.DRAWER -> {
+                        val canChangePage = if (pageDelta < 0) {
+                            drawerPager?.previous?.isEnabled == true
+                        } else {
+                            drawerPager?.next?.isEnabled == true
+                        }
+                        if (canChangePage) changeDrawerPage(pageDelta)
                     }
-                    if (canChangePage) {
-                        availablePage += pageDelta
-                        renderAvailableApps(requestFocusOnFirstItem = true)
+                    Screen.MANAGEMENT -> {
+                        val canChangePage = if (pageDelta < 0) {
+                            availablePager?.previous?.isEnabled == true
+                        } else {
+                            availablePager?.next?.isEnabled == true
+                        }
+                        if (canChangePage) {
+                            availablePage += pageDelta
+                            renderAvailableApps(requestFocusOnFirstItem = true)
+                        }
                     }
                 }
             }
@@ -346,10 +368,9 @@ class MainActivity : Activity() {
             showManagement(isFirstRun = false)
             return true
         }
-        val isPaginationScreen = currentScreen == Screen.HOME || currentScreen == Screen.MANAGEMENT
         val isPageKey = keyCode == KeyEvent.KEYCODE_PAGE_UP ||
             keyCode == KeyEvent.KEYCODE_PAGE_DOWN
-        if (isPaginationScreen && isPageKey) {
+        if (isPaginationScreen() && isPageKey) {
             return true
         }
         return super.onKeyUp(keyCode, event)
@@ -372,7 +393,7 @@ class MainActivity : Activity() {
 
         val root = createBaseScreen()
         homeRoot = root
-        homeErrorView = null
+        launchErrorView = null
 
         homeApps = appsRepository.loadApps(preferences.selectedComponents())
         val content = LinearLayout(this).apply {
@@ -387,31 +408,14 @@ class MainActivity : Activity() {
         }
         content.addView(homeAppsContainer, linearMatchWrapParams())
 
-        val pagination = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        previousHomePageButton = actionButton(getString(R.string.previous_page)) {
-            changeHomePage(-1)
-        }
-        homePageIndicatorView = plainText("", SMALL_TEXT_SIZE_SP).apply {
-            gravity = Gravity.CENTER
-        }
-        nextHomePageButton = actionButton(getString(R.string.next_page)) {
-            changeHomePage(1)
-        }
-        pagination.addView(previousHomePageButton, linearWrapParams())
-        pagination.addView(
-            homePageIndicatorView,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = dp(8)
-                marginEnd = dp(8)
-            },
+        val pager = createPager(
+            onPrevious = { changeHomePage(-1) },
+            onNext = { changeHomePage(1) },
         )
-        pagination.addView(nextHomePageButton, linearWrapParams())
+        homePager = pager
         homePagerSpacingView = verticalSpace(HOME_PAGER_TOP_SPACING_DP)
         content.addView(homePagerSpacingView)
-        content.addView(pagination, linearMatchWrapParams())
+        content.addView(pager.view, centeredWrapParams())
 
         val contentMaxWidthPx = dp(
             HomeGridPolicy.contentMaxWidthDp(
@@ -437,34 +441,94 @@ class MainActivity : Activity() {
             },
         )
 
-        homeManagementButton = ImageView(this).apply {
-            setImageResource(R.drawable.ic_settings)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            isClickable = true
-            isFocusable = true
-            background = focusOnlyBackground()
-            contentDescription = getString(R.string.management_button_description)
-            setOnLongClickListener {
-                showManagement(isFirstRun = false)
-                true
-            }
-        }
-        root.addView(
-            homeManagementButton,
-            FrameLayout.LayoutParams(
-                dp(HOME_MANAGEMENT_BUTTON_SIZE_DP),
-                dp(HOME_MANAGEMENT_BUTTON_SIZE_DP),
-                Gravity.BOTTOM or Gravity.END,
-            ).apply {
-                marginEnd = dp(HOME_SIDE_MARGIN_DP)
-                bottomMargin = dp(HOME_MANAGEMENT_BUTTON_MARGIN_DP)
-            },
-        )
+        homeManagementButton = homeCornerButton(
+            R.drawable.ic_settings,
+            R.string.management_button_description,
+            slot = 0,
+        ) { showManagement(isFirstRun = false) }
+        root.addView(homeManagementButton, homeCornerButtonParams(slot = 0))
+
+        homeDrawerButton = homeCornerButton(
+            R.drawable.ic_apps,
+            R.string.drawer_button_description,
+            slot = 1,
+        ) { showDrawer() }
+        root.addView(homeDrawerButton, homeCornerButtonParams(slot = 1))
+
+        homeLockButton = homeCornerButton(
+            R.drawable.ic_lock,
+            R.string.lock_button_description,
+            slot = 2,
+        ) { lockScreen() }
+        root.addView(homeLockButton, homeCornerButtonParams(slot = 2))
 
         setContentView(root)
         renderHomePage()
         hideSystemStatusBar()
+    }
+
+    /**
+     * One of Home's bottom-right long-press buttons. [slot] counts from the right edge, so the
+     * settings button is slot 0 and every further button sits one button-and-gap further left.
+     */
+    private fun homeCornerButton(
+        icon: Int,
+        description: Int,
+        slot: Int,
+        onClick: () -> Unit,
+    ): ImageView = ImageView(this).apply {
+        setImageResource(icon)
+        scaleType = ImageView.ScaleType.CENTER_INSIDE
+        val padding = dp(HOME_CORNER_BUTTON_PADDING_DP)
+        setPadding(padding, padding, padding, padding)
+        isClickable = true
+        isFocusable = true
+        background = focusOnlyBackground()
+        contentDescription = getString(description)
+        setOnLongClickListener {
+            onClick()
+            true
+        }
+    }
+
+    private fun homeCornerButtonParams(slot: Int) = FrameLayout.LayoutParams(
+        dp(HOME_MANAGEMENT_BUTTON_SIZE_DP),
+        dp(HOME_MANAGEMENT_BUTTON_SIZE_DP),
+        Gravity.BOTTOM or Gravity.END,
+    ).apply {
+        marginEnd = dp(
+            HOME_SIDE_MARGIN_DP +
+                slot * (HOME_MANAGEMENT_BUTTON_SIZE_DP + HOME_BUTTON_SPACING_DP),
+        )
+        bottomMargin = dp(HOME_MANAGEMENT_BUTTON_MARGIN_DP)
+    }
+
+    /**
+     * Locks the screen through device admin, which is the only route open to an ordinary app.
+     * Android never grants that silently, so the first press can only ask for it.
+     */
+    private fun lockScreen() {
+        val policyManager =
+            getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return
+        val admin = ComponentName(this, LauncherDeviceAdminReceiver::class.java)
+        if (policyManager.isAdminActive(admin)) {
+            policyManager.lockNow()
+            return
+        }
+
+        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+            .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+            .putExtra(
+                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                getString(R.string.lock_admin_explanation),
+            )
+        try {
+            startActivityWithoutAnimation(intent)
+        } catch (_: ActivityNotFoundException) {
+            // Some builds hide the device-admin UI; leave the button inert rather than crash.
+        } catch (_: SecurityException) {
+            // Same: without a grant path there is nothing useful to report here.
+        }
     }
 
     private fun renderHomePage(requestFocusOnFirstItem: Boolean = false) {
@@ -487,7 +551,6 @@ class MainActivity : Activity() {
         ) + dp(preset.homeRowSpacingDp)
         val page = SelectionPolicy.page(homeApps, homePage, rows * columns)
         homePage = page.pageIndex
-        homePageCount = page.pageCount
         container.removeAllViews()
         container.minimumHeight = if (homeApps.isEmpty()) {
             0
@@ -545,21 +608,9 @@ class MainActivity : Activity() {
 
         val pagerVisible = page.pageCount > 1
         homePagerSpacingView?.visibility = if (pagerVisible) View.VISIBLE else View.GONE
-        homePageIndicatorView?.apply {
-            visibility = if (pagerVisible) View.VISIBLE else View.GONE
-            text = getString(
-                R.string.page_indicator,
-                page.pageIndex + 1,
-                page.pageCount,
-            )
-        }
-        previousHomePageButton?.apply {
-            visibility = if (pagerVisible) View.VISIBLE else View.GONE
-            isEnabled = page.hasPrevious
-        }
-        nextHomePageButton?.apply {
-            visibility = if (pagerVisible) View.VISIBLE else View.GONE
-            isEnabled = page.hasNext
+        homePager?.let { pager ->
+            pager.view.visibility = if (pagerVisible) View.VISIBLE else View.GONE
+            renderPager(pager, page)
         }
         if (requestFocusOnFirstItem) firstHomeAppView?.requestFocus()
     }
@@ -568,7 +619,7 @@ class MainActivity : Activity() {
         delta: Int,
         requestFocusOnFirstItem: Boolean = false,
     ): Boolean {
-        val targetPage = (homePage + delta).coerceIn(0, homePageCount - 1)
+        val targetPage = (homePage + delta).coerceIn(0, (homePager?.pageCount ?: 1) - 1)
         if (targetPage == homePage) return false
         homePage = targetPage
         renderHomePage(requestFocusOnFirstItem)
@@ -582,6 +633,15 @@ class MainActivity : Activity() {
         renderHomePage()
     }
 
+    /**
+     * Loads every launchable app and warms its icon. Both management lists and the drawer draw an
+     * icon per row, so a cold cache would otherwise generate them one by one on the UI thread.
+     */
+    private fun loadAllLaunchableApps(): List<LaunchableApp> =
+        appsRepository.loadApps().also { apps ->
+            iconCache.warmAsync(apps.map { it.componentName })
+        }
+
     private fun showManagement(isFirstRun: Boolean) {
         if (currentScreen == Screen.MANAGEMENT && !isFirstRun) return
 
@@ -591,7 +651,7 @@ class MainActivity : Activity() {
         clearHomeReferences()
         clearManagementReferences()
         defaultLauncherErrorVisible = false
-        cachedApps = appsRepository.loadApps()
+        cachedApps = loadAllLaunchableApps()
 
         val root = createBaseScreen()
         val scrollView = NoFlingScrollView(this).apply {
@@ -642,7 +702,10 @@ class MainActivity : Activity() {
         )
 
         if (isFirstRun) {
-            firstRunHintView = plainText(getString(R.string.first_run_hint), BODY_TEXT_SIZE_SP).apply {
+            firstRunHintView = plainText(
+                getString(R.string.first_run_hint, preferences.homeGridCapacity()),
+                BODY_TEXT_SIZE_SP,
+            ).apply {
                     setLineSpacing(0f, 1.15f)
                 }
             content.addView(firstRunHintView, linearMatchWrapParams())
@@ -766,31 +829,18 @@ class MainActivity : Activity() {
         content.addView(availableContainer, linearMatchWrapParams())
         content.addView(verticalSpace(8))
 
-        val pagination = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        previousPageButton = actionButton(getString(R.string.previous_page)) {
-            availablePage -= 1
-            renderAvailableApps()
-        }
-        pageIndicatorView = plainText("", SMALL_TEXT_SIZE_SP).apply {
-            gravity = Gravity.CENTER
-        }
-        nextPageButton = actionButton(getString(R.string.next_page)) {
-            availablePage += 1
-            renderAvailableApps()
-        }
-        pagination.addView(previousPageButton, linearWrapParams())
-        pagination.addView(
-            pageIndicatorView,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = dp(8)
-                marginEnd = dp(8)
+        val pager = createPager(
+            onPrevious = {
+                availablePage -= 1
+                renderAvailableApps()
+            },
+            onNext = {
+                availablePage += 1
+                renderAvailableApps()
             },
         )
-        pagination.addView(nextPageButton, linearWrapParams())
-        content.addView(pagination, linearMatchWrapParams())
+        availablePager = pager
+        content.addView(pager.view, centeredWrapParams())
 
         if (!isFirstRun) {
             content.addView(verticalSpace(20))
@@ -819,6 +869,198 @@ class MainActivity : Activity() {
         renderSelectedApps()
         renderAvailableApps()
         hideSystemStatusBar()
+    }
+
+    /**
+     * Rows the drawer grid can hold. A real cell is measured rather than estimated, so the count
+     * follows the system font size and cannot leave the last row clipped.
+     */
+    private fun rowsThatFitDrawer(): Int {
+        val availablePx = resources.displayMetrics.heightPixels -
+            dp(MANAGEMENT_CONTENT_TOP_MARGIN_DP) -
+            dp(DRAWER_PAGER_RESERVE_DP)
+        val sample = drawerApps.firstOrNull() ?: return AppDrawerPolicy.FALLBACK_ROWS
+        val cellHeightPx = drawerCell(sample).run {
+            measure(
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            )
+            measuredHeight
+        }
+        if (cellHeightPx <= 0) return AppDrawerPolicy.FALLBACK_ROWS
+        return AppDrawerPolicy.rowsFor(availablePx, cellHeightPx)
+    }
+
+    /** Every launchable app, paged into a four-column grid of its own. */
+    private fun showDrawer() {
+        resetUpdateSession()
+        currentScreen = Screen.DRAWER
+        firstRunManagement = false
+        clearHomeReferences()
+        clearManagementReferences()
+        clearDrawerReferences()
+
+        drawerApps = loadAllLaunchableApps()
+        drawerPage = 0
+        drawerRows = rowsThatFitDrawer()
+
+        val root = createBaseScreen()
+        drawerRoot = root
+
+        drawerGridContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.START
+        }
+        root.addView(
+            drawerGridContainer,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER_HORIZONTAL or Gravity.TOP,
+            ).apply {
+                marginStart = dp(MANAGEMENT_SIDE_MARGIN_DP)
+                marginEnd = dp(MANAGEMENT_SIDE_MARGIN_DP)
+                topMargin = dp(MANAGEMENT_CONTENT_TOP_MARGIN_DP)
+                // Reserve the pager's strip so the grid stops above it instead of flowing into it.
+                bottomMargin = dp(DRAWER_PAGER_RESERVE_DP)
+            },
+        )
+
+        val pager = createPager(
+            onPrevious = { changeDrawerPage(-1) },
+            onNext = { changeDrawerPage(1) },
+        )
+        drawerPager = pager
+        root.addView(
+            pager.view,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+            ).apply {
+                bottomMargin = dp(HOME_CONTENT_BOTTOM_RESERVE_DP)
+            },
+        )
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(
+            plainText(getString(R.string.drawer_title), TITLE_TEXT_SIZE_SP).apply {
+                setTypeface(typeface, Typeface.BOLD)
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        header.addView(
+            iconButton(
+                R.drawable.ic_home,
+                R.string.back_to_home,
+                focusOnlyBackground(),
+            ) { showHome() },
+            iconButtonParams(),
+        )
+        root.addView(
+            header,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(ACTION_HEIGHT_DP),
+                Gravity.TOP,
+            ).apply {
+                topMargin = dp(MANAGEMENT_TOP_MARGIN_DP)
+                marginStart = dp(MANAGEMENT_SIDE_MARGIN_DP)
+                marginEnd = dp(MANAGEMENT_SIDE_MARGIN_DP)
+            },
+        )
+
+        setContentView(root)
+        renderDrawerPage()
+        hideSystemStatusBar()
+    }
+
+    private fun renderDrawerPage(requestFocusOnFirstItem: Boolean = false) {
+        val container = drawerGridContainer ?: return
+        val page = SelectionPolicy.page(
+            drawerApps,
+            drawerPage,
+            drawerRows * AppDrawerPolicy.COLUMNS,
+        )
+        drawerPage = page.pageIndex
+        container.removeAllViews()
+        var firstCell: View? = null
+
+        AppDrawerPolicy.toRows(page.items).forEach { rowApps ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.START
+            }
+            rowApps.forEach { app ->
+                val cell = drawerCell(app)
+                if (firstCell == null) firstCell = cell
+                row.addView(
+                    cell,
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+            }
+            // Invisible weighted fillers keep a short final row aligned to the columns above it.
+            repeat(AppDrawerPolicy.COLUMNS - rowApps.size) {
+                row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+            }
+            container.addView(row, linearMatchWrapParams())
+        }
+
+        drawerPager?.let { renderPager(it, page) }
+        if (requestFocusOnFirstItem) firstCell?.requestFocus()
+    }
+
+    private fun drawerCell(app: LaunchableApp): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        isClickable = true
+        isFocusable = true
+        background = focusOnlyBackground()
+        contentDescription = getString(R.string.open_app, app.label)
+        setPadding(dp(4), dp(8), dp(4), dp(8))
+        setOnClickListener { launchDrawerApp(app) }
+        iconCache.icon(app.componentName)?.let { icon ->
+            val size = dp(DRAWER_ICON_SIZE_DP)
+            addView(
+                ImageView(this@MainActivity).apply {
+                    setImageDrawable(icon)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },
+                LinearLayout.LayoutParams(size, size),
+            )
+        }
+        addView(
+            plainText(app.label, BODY_TEXT_SIZE_SP).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            },
+            linearMatchWrapParams(),
+        )
+    }
+
+    /**
+     * Launching closes the drawer: returning from the app should land on Home, not on a stale
+     * drawer listing. The flag defers that until the app is actually left, so a screen-off
+     * pause/resume alone does not throw the user out of the drawer.
+     */
+    private fun launchDrawerApp(app: LaunchableApp) {
+        if (appsRepository.launch(app.componentName)) {
+            drawerHandedOff = true
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
+        } else {
+            showLaunchError(app.label)
+        }
+    }
+
+    private fun changeDrawerPage(delta: Int) {
+        drawerPage += delta
+        renderDrawerPage(requestFocusOnFirstItem = true)
     }
 
     private fun finishManagement() {
@@ -861,47 +1103,47 @@ class MainActivity : Activity() {
             val systemLabel = app?.label ?: component.packageName
             val alias = preferences.appAlias(component)
             val label = alias ?: systemLabel
+            val packageName = component.packageName
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 minimumHeight = dp(MANAGEMENT_ROW_HEIGHT_DP)
             }
-            val labelColumn = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            labelColumn.addView(
-                plainText(label, BODY_TEXT_SIZE_SP).apply {
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    isClickable = true
-                    isFocusable = true
-                    background = focusOnlyBackground()
-                    contentDescription = getString(R.string.rename_app, label)
-                    setPadding(dp(4), dp(4), dp(4), dp(4))
-                    setOnClickListener {
-                        showRenameAppDialog(component, systemLabel)
+            addAppIcon(row, component)
+            val detailLines = AppRowPolicy
+                .secondaryLines(
+                    hasAlias = alias != null && alias != systemLabel,
+                    isAvailable = app != null,
+                )
+                .map { line ->
+                    when (line) {
+                        AppRowLine.SYSTEM_NAME -> plainText(
+                            getString(R.string.system_app_name, systemLabel),
+                            SMALL_TEXT_SIZE_SP,
+                        )
+                        AppRowLine.UNAVAILABLE -> plainText(
+                            getString(R.string.app_unavailable),
+                            SMALL_TEXT_SIZE_SP,
+                        )
+                        AppRowLine.PACKAGE_NAME -> packageNameLine(packageName)
                     }
-                },
-                linearMatchWrapParams(),
-            )
-            if (alias != null && alias != systemLabel) {
-                labelColumn.addView(
-                    plainText(
-                        getString(R.string.system_app_name, systemLabel),
-                        SMALL_TEXT_SIZE_SP,
-                    ),
-                    linearMatchWrapParams(),
-                )
-            }
-            if (app == null) {
-                labelColumn.addView(
-                    plainText(getString(R.string.app_unavailable), SMALL_TEXT_SIZE_SP),
-                    linearMatchWrapParams(),
-                )
-            }
+                }
             row.addView(
-                labelColumn,
+                appLabelColumn(
+                    label = plainText(label, BODY_TEXT_SIZE_SP).apply {
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        isClickable = true
+                        isFocusable = true
+                        background = focusOnlyBackground()
+                        contentDescription = getString(R.string.rename_app, label, packageName)
+                        setPadding(dp(4), dp(4), dp(4), dp(4))
+                        setOnClickListener {
+                            showRenameAppDialog(component, systemLabel)
+                        }
+                    },
+                    extraLines = detailLines,
+                ),
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginEnd = dp(8)
                 },
@@ -912,19 +1154,19 @@ class MainActivity : Activity() {
             }.apply {
                 isEnabled = index > 0
                 visibility = if (index > 0) View.VISIBLE else View.INVISIBLE
-                contentDescription = getString(R.string.move_app_up, label)
+                contentDescription = getString(R.string.move_app_up, label, packageName)
             }
             val downButton = actionButton(getString(R.string.move_down)) {
                 updateSelection { SelectionPolicy.moveDown(it, component) }
             }.apply {
                 isEnabled = index < selected.lastIndex
                 visibility = if (index < selected.lastIndex) View.VISIBLE else View.INVISIBLE
-                contentDescription = getString(R.string.move_app_down, label)
+                contentDescription = getString(R.string.move_app_down, label, packageName)
             }
             val removeButton = actionButton(getString(R.string.remove)) {
                 updateSelection { SelectionPolicy.remove(it, component) }
             }.apply {
-                contentDescription = getString(R.string.remove_app, label)
+                contentDescription = getString(R.string.remove_app, label, packageName)
             }
             row.addView(upButton, compactButtonParams())
             row.addView(horizontalSpace(4))
@@ -963,17 +1205,20 @@ class MainActivity : Activity() {
                 isFocusable = isClickable
                 if (isClickable) {
                     background = focusOnlyBackground()
-                    contentDescription = getString(R.string.add_app, app.label)
+                    contentDescription = addAppDescription(app)
                     setOnClickListener { addSelectedApp(app.componentName) }
                 }
             }
             if (firstAvailableRow == null && row.isFocusable) firstAvailableRow = row
+            addAppIcon(row, app.componentName)
             row.addView(
-                plainText(app.label, BODY_TEXT_SIZE_SP).apply {
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    gravity = Gravity.CENTER_VERTICAL
-                },
+                appLabelColumn(
+                    label = plainText(app.label, BODY_TEXT_SIZE_SP).apply {
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                    },
+                    extraLines = listOf(packageNameLine(app.componentName.packageName)),
+                ),
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginEnd = dp(8)
                 },
@@ -982,7 +1227,7 @@ class MainActivity : Activity() {
                 actionButton(getString(R.string.add)) {
                     addSelectedApp(app.componentName)
                 }.apply {
-                    contentDescription = getString(R.string.add_app, app.label)
+                    contentDescription = addAppDescription(app)
                     isEnabled = selected.size < capacity
                     if (!isEnabled) text = getString(R.string.selection_full_short)
                 },
@@ -992,24 +1237,23 @@ class MainActivity : Activity() {
             if (index < page.items.lastIndex) container.addView(verticalSpace(4))
         }
 
-        pageIndicatorView?.text = if (page.items.isEmpty()) {
-            getString(R.string.page_indicator, page.pageIndex + 1, page.pageCount)
-        } else {
-            val rangeStart = page.pageIndex * AVAILABLE_PAGE_SIZE + 1
-            val rangeEnd = rangeStart + page.items.size - 1
-            getString(
-                R.string.available_page_indicator,
-                rangeStart,
-                rangeEnd,
-                available.size,
-                page.pageIndex + 1,
-                page.pageCount,
-            )
+        availablePager?.let { pager ->
+            val label = if (page.items.isEmpty()) {
+                getString(R.string.page_indicator_compact, page.pageIndex + 1, page.pageCount)
+            } else {
+                val rangeStart = page.pageIndex * AVAILABLE_PAGE_SIZE + 1
+                val rangeEnd = rangeStart + page.items.size - 1
+                getString(
+                    R.string.available_page_indicator,
+                    rangeStart,
+                    rangeEnd,
+                    available.size,
+                    page.pageIndex + 1,
+                    page.pageCount,
+                )
+            }
+            renderPager(pager, page, label)
         }
-        previousPageButton?.isEnabled = page.hasPrevious
-        nextPageButton?.isEnabled = page.hasNext
-        previousPageButton?.visibility = if (page.hasPrevious) View.VISIBLE else View.INVISIBLE
-        nextPageButton?.visibility = if (page.hasNext) View.VISIBLE else View.INVISIBLE
         if (requestFocusOnFirstItem) firstAvailableRow?.requestFocus()
     }
 
@@ -1622,7 +1866,7 @@ class MainActivity : Activity() {
                     @Suppress("DEPRECATION")
                     overridePendingTransition(0, 0)
                 } else {
-                    showHomeLaunchError(displayLabel)
+                    showLaunchError(displayLabel)
                 }
             }
         }
@@ -1661,9 +1905,23 @@ class MainActivity : Activity() {
             .coerceAtMost(rowCap.coerceAtLeast(HOME_ICON_MIN_DP))
     }
 
-    private fun showHomeLaunchError(appLabel: String) {
-        val root = homeRoot ?: return
-        if (homeErrorView != null) return
+    /**
+     * Home and the drawer show the date, time, Wi-Fi and battery cluster; management keeps just
+     * the battery, since a settings panel has no use for the clock and it stays quieter.
+     */
+    private fun showsFullStatusBar(): Boolean = currentScreen != Screen.MANAGEMENT
+
+    /** Root of the screen on show, for overlays that float above its content. */
+    private fun currentScreenRoot(): FrameLayout? = when (currentScreen) {
+        Screen.HOME -> homeRoot
+        Screen.DRAWER -> drawerRoot
+        Screen.MANAGEMENT -> null
+    }
+
+    /** Shown over Home or the drawer; dismissing it leaves the user on the screen they were on. */
+    private fun showLaunchError(appLabel: String) {
+        val root = currentScreenRoot() ?: return
+        if (launchErrorView != null) return
 
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1678,10 +1936,10 @@ class MainActivity : Activity() {
             },
         )
         panel.addView(
-            actionButton(getString(android.R.string.ok)) { showHome() },
+            actionButton(getString(android.R.string.ok)) { dismissLaunchError() },
             linearWrapParams(),
         )
-        homeErrorView = panel
+        launchErrorView = panel
         root.addView(
             panel,
             FrameLayout.LayoutParams(
@@ -1701,6 +1959,12 @@ class MainActivity : Activity() {
         panel.announceForAccessibility(getString(R.string.unable_to_open_app, appLabel))
     }
 
+    private fun dismissLaunchError() {
+        val panel = launchErrorView ?: return
+        (panel.parent as? ViewGroup)?.removeView(panel)
+        launchErrorView = null
+    }
+
     private fun createBaseScreen(): FrameLayout {
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.WHITE)
@@ -1710,10 +1974,10 @@ class MainActivity : Activity() {
         datePrefixView = null
         timeView = null
         wifiView = null
-        homeStatusView = null
+        statusView = null
         if (currentBattery.isEmpty()) readCurrentBattery()?.let(::updateBattery)
 
-        if (currentScreen == Screen.HOME) {
+        if (showsFullStatusBar()) {
             val status = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.END or Gravity.CENTER_VERTICAL
@@ -1763,7 +2027,7 @@ class MainActivity : Activity() {
                     marginStart = dp(STATUS_ITEM_SPACING_DP)
                 },
             )
-            homeStatusView = status
+            statusView = status
             root.addView(
                 status,
                 FrameLayout.LayoutParams(
@@ -2026,7 +2290,7 @@ class MainActivity : Activity() {
             }
         }
 
-        val showDate = currentScreen == Screen.HOME &&
+        val showDate = showsFullStatusBar() &&
             preferences.homeClockMode() == HomeClockMode.DATE_AND_TIME
         datePrefixView?.apply {
             visibility = if (showDate) View.VISIBLE else View.GONE
@@ -2050,7 +2314,7 @@ class MainActivity : Activity() {
                 WifiIndicator.HIDDEN -> R.string.wifi_summary_off
             },
         )
-        homeStatusView?.contentDescription = if (showDate) {
+        statusView?.contentDescription = if (showDate) {
             getString(
                 R.string.home_status_date_summary,
                 currentTime,
@@ -2125,6 +2389,46 @@ class MainActivity : Activity() {
         setBackgroundColor(Color.TRANSPARENT)
     }
 
+    /**
+     * Dim package-name line closing every management app row. Distinct packages can share a
+     * label, so this is what makes two identical looking rows tellable apart.
+     */
+    private fun packageNameLine(packageName: String): TextView =
+        plainText(packageName, SMALL_TEXT_SIZE_SP).apply {
+            setTextColor(DISABLED_INK_COLOR)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+
+    /** Prepends the grayscale app icon to a management row, or nothing when the app has none. */
+    private fun addAppIcon(row: LinearLayout, component: ComponentName) {
+        val icon = iconCache.icon(component) ?: return
+        val size = dp(MANAGEMENT_ICON_SIZE_DP)
+        row.addView(
+            ImageView(this).apply {
+                setImageDrawable(icon)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            LinearLayout.LayoutParams(size, size).apply {
+                marginEnd = dp(MANAGEMENT_ICON_SPACING_DP)
+            },
+        )
+    }
+
+    /** Stacks a row's primary label above its dim detail lines. */
+    private fun appLabelColumn(label: TextView, extraLines: List<TextView>): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(label, linearMatchWrapParams())
+            extraLines.forEach { addView(it, linearMatchWrapParams()) }
+        }
+
+    /** Spoken form of the add action; the visible package-name line never reaches TalkBack. */
+    private fun addAppDescription(app: LaunchableApp): String =
+        getString(R.string.add_app, app.label, app.componentName.packageName)
+
     private fun sectionHeading(text: CharSequence): TextView =
         plainText(text, SECTION_TEXT_SIZE_SP).apply {
             setTypeface(typeface, Typeface.BOLD)
@@ -2146,6 +2450,88 @@ class MainActivity : Activity() {
         background = outlinedButtonBackground()
         stateListAnimator = null
         setOnClickListener { onClick() }
+    }
+
+    /** Chevrons either side of a page counter; every paged screen shows this same control. */
+    private class Pager(
+        val view: LinearLayout,
+        val previous: ImageView,
+        val next: ImageView,
+        val indicator: TextView,
+    ) {
+        var pageCount = 1
+    }
+
+    private fun createPager(onPrevious: () -> Unit, onNext: () -> Unit): Pager {
+        val previous = iconButton(
+            R.drawable.ic_chevron_left,
+            R.string.previous_page,
+            outlinedButtonBackground(),
+            onPrevious,
+        )
+        val next = iconButton(
+            R.drawable.ic_chevron_right,
+            R.string.next_page,
+            outlinedButtonBackground(),
+            onNext,
+        )
+        val indicator = plainText("", SMALL_TEXT_SIZE_SP).apply {
+            gravity = Gravity.CENTER
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        row.addView(previous, iconButtonParams())
+        row.addView(
+            indicator,
+            linearWrapParams().apply {
+                marginStart = dp(PAGER_INDICATOR_SPACING_DP)
+                marginEnd = dp(PAGER_INDICATOR_SPACING_DP)
+            },
+        )
+        row.addView(next, iconButtonParams())
+        return Pager(row, previous, next, indicator)
+    }
+
+    /**
+     * Icon-only button; it carries no text, so [description] is what a screen reader announces.
+     * The caller picks the background: an outline makes a control read as a button, while
+     * [focusOnlyBackground] leaves the icon bare until it is touched.
+     */
+    private fun iconButton(
+        icon: Int,
+        description: Int,
+        buttonBackground: StateListDrawable,
+        onClick: () -> Unit,
+    ): ImageView = ImageView(this).apply {
+        setImageResource(icon)
+        imageTintList = buttonTextColors()
+        scaleType = ImageView.ScaleType.CENTER_INSIDE
+        val padding = dp(ICON_BUTTON_PADDING_DP)
+        setPadding(padding, padding, padding, padding)
+        isClickable = true
+        isFocusable = true
+        background = buttonBackground
+        contentDescription = getString(description)
+        setOnClickListener { onClick() }
+    }
+
+    private fun iconButtonParams() = LinearLayout.LayoutParams(
+        dp(ACTION_HEIGHT_DP),
+        dp(ACTION_HEIGHT_DP),
+    )
+
+    /**
+     * Applies a page to its control. The label is passed in because the management list shows a
+     * richer range summary than the bare page counter the other screens use.
+     */
+    private fun renderPager(pager: Pager, page: PageResult<*>, label: CharSequence? = null) {
+        pager.pageCount = page.pageCount
+        pager.indicator.text = label
+            ?: getString(R.string.page_indicator_compact, page.pageIndex + 1, page.pageCount)
+        pager.previous.isEnabled = page.hasPrevious
+        pager.next.isEnabled = page.hasNext
     }
 
     private fun buttonTextColors(): ColorStateList = ColorStateList(
@@ -2221,6 +2607,11 @@ class MainActivity : Activity() {
         ViewGroup.LayoutParams.WRAP_CONTENT,
     )
 
+    /** Wraps a child and centres it in its row, whatever the parent row's own gravity is. */
+    private fun centeredWrapParams() = linearWrapParams().apply {
+        gravity = Gravity.CENTER_HORIZONTAL
+    }
+
     private fun linearMatchWrapParams() = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -2242,9 +2633,7 @@ class MainActivity : Activity() {
         selectedContainer = null
         selectedCountView = null
         availableContainer = null
-        pageIndicatorView = null
-        previousPageButton = null
-        nextPageButton = null
+        availablePager = null
         defaultLauncherContainer = null
         firstRunHintView = null
         homeTextSizeValueView = null
@@ -2257,20 +2646,30 @@ class MainActivity : Activity() {
 
     private fun clearHomeReferences() {
         homeRoot = null
-        homeErrorView = null
+        launchErrorView = null
         homeManagementButton = null
+        homeDrawerButton = null
+        homeLockButton = null
         homeAppsContainer = null
         homePagerSpacingView = null
-        homePageIndicatorView = null
-        previousHomePageButton = null
-        nextHomePageButton = null
-        homePageCount = 1
+        homePager = null
         homeApps = emptyList()
+    }
+
+    private fun clearDrawerReferences() {
+        drawerRoot = null
+        drawerGridContainer = null
+        drawerPager = null
+        drawerApps = emptyList()
+        drawerPage = 0
+        drawerRows = AppDrawerPolicy.FALLBACK_ROWS
+        drawerHandedOff = false
     }
 
     private enum class Screen {
         HOME,
         MANAGEMENT,
+        DRAWER,
     }
 
     private enum class UpdateState {
@@ -2306,6 +2705,8 @@ class MainActivity : Activity() {
         const val HOME_PAGER_TOP_SPACING_DP = 8
         const val HOME_MANAGEMENT_BUTTON_SIZE_DP = 48
         const val HOME_MANAGEMENT_BUTTON_MARGIN_DP = 20
+        const val HOME_BUTTON_SPACING_DP = 12
+        const val HOME_CORNER_BUTTON_PADDING_DP = 10
         const val HOME_ICON_TEXT_SCALE = 1.3f
         const val HOME_ICON_ROW_PADDING_DP = 16
         const val HOME_ICON_MIN_DP = 20
@@ -2313,7 +2714,12 @@ class MainActivity : Activity() {
         const val MANAGEMENT_SIDE_MARGIN_DP = 24
         const val MANAGEMENT_TOP_MARGIN_DP = 56
         const val MANAGEMENT_CONTENT_TOP_MARGIN_DP = 112
-        const val MANAGEMENT_ROW_HEIGHT_DP = 48
+        const val MANAGEMENT_ROW_HEIGHT_DP = 64
+        const val MANAGEMENT_ICON_SIZE_DP = 28
+        const val MANAGEMENT_ICON_SPACING_DP = 12
+        const val DRAWER_ICON_SIZE_DP = 40
+        const val ICON_BUTTON_PADDING_DP = 12
+        const val PAGER_INDICATOR_SPACING_DP = 16
         const val MIN_STATUS_TOUCH_HEIGHT_DP = 48
         const val STATUS_TOP_MARGIN_DP = 4
         const val STATUS_END_MARGIN_DP = 20
@@ -2323,6 +2729,14 @@ class MainActivity : Activity() {
         const val CHARGING_ICON_PADDING_DP = 3
         const val STATUS_ITEM_SPACING_DP = 10
         const val ACTION_HEIGHT_DP = 48
+
+        /**
+         * Height the drawer grid must leave free for the pinned pager and the gap above it. Used
+         * both as the grid's bottom margin and as the subtraction in [rowsThatFitDrawer], so the
+         * layout and the row maths cannot drift apart.
+         */
+        const val DRAWER_PAGER_RESERVE_DP =
+            HOME_CONTENT_BOTTOM_RESERVE_DP + HOME_PAGER_TOP_SPACING_DP + ACTION_HEIGHT_DP
         const val RENAME_DIALOG_MAX_WIDTH_DP = 520
         const val RENAME_DIALOG_SIDE_MARGIN_DP = 24
         const val DISABLED_INK_COLOR = -10_066_330

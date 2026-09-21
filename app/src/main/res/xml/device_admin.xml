@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+        Locking the screen is the only device-management capability this launcher asks for. The
+        fewer policies requested, the smaller the trust cost shown on the system's grant screen.
+    -->
+    <uses-policies>
+        <force-lock />
+    </uses-policies>
+</device-admin>
