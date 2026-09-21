@@ -20,7 +20,7 @@
     <string name="selected_apps">已选择</string>
     <string name="selected_apps_hint">轻触应用名称，可以设置更简短的主屏名称。</string>
     <string name="home_display_preset">主屏显示</string>
-    <string name="home_display_preset_summary">已选：%1$s · %2$d sp；同时优化行高与字重。</string>
+    <string name="home_display_preset_summary">已选：%1$s · %2$d sp；同时优化行高、字重与间隔。</string>
     <string name="home_display_legacy_summary">当前自定义字号：%1$d sp；在主动选择预设前会保持不变。</string>
     <string name="display_preset_compact">紧凑</string>
     <string name="display_preset_comfortable">舒适</string>

@@ -150,10 +150,10 @@ class LauncherPreferencesTest {
         preferences.saveHomeGridRows(99)
         preferences.saveHomeGridColumns(0)
 
-        assertEquals(10, preferences.homeGridRows())
+        assertEquals(16, preferences.homeGridRows())
         assertEquals(1, preferences.homeGridColumns())
-        assertEquals(10, preferences.homeGridCapacity())
-        assertEquals(10, store.getInt("home_grid_rows", -1))
+        assertEquals(16, preferences.homeGridCapacity())
+        assertEquals(16, store.getInt("home_grid_rows", -1))
         assertEquals(1, store.getInt("home_grid_columns", -1))
 
         preferences.saveHomeGridRows(9)
@@ -174,9 +174,9 @@ class LauncherPreferencesTest {
         )
         val preferences = LauncherPreferences(store)
 
-        assertEquals(8, preferences.homeGridRows())
+        assertEquals(4, preferences.homeGridRows())
         assertEquals(2, preferences.homeGridColumns())
-        assertEquals(16, preferences.homeGridCapacity())
+        assertEquals(8, preferences.homeGridCapacity())
     }
 
     @Test

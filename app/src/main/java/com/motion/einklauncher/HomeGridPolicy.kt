@@ -2,8 +2,8 @@ package com.motion.einklauncher
 
 /** Pure bounds and capacity rules for the home-screen app grid. */
 internal object HomeGridPolicy {
-    const val MIN_ROWS = 8
-    const val MAX_ROWS = 10
+    const val MIN_ROWS = 4
+    const val MAX_ROWS = 16
     const val MIN_COLUMNS = 1
     const val MAX_COLUMNS = 2
     const val DEFAULT_ROWS = 8

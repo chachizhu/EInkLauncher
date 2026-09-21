@@ -9,9 +9,32 @@ class DisplayPresetTest {
     fun `presets expose stable display specifications`() {
         assertEquals(listOf("compact", "comfortable", "large"), DisplayPreset.entries.map { it.storageValue })
         assertEquals(listOf(19, 23, 30), DisplayPreset.entries.map { it.homeTextSizeSp })
-        assertEquals(listOf(48, 56, 68), DisplayPreset.entries.map { it.homeRowHeightDp })
-        assertEquals(listOf(400, 500, 600), DisplayPreset.entries.map { it.fontWeight })
+        assertEquals(listOf(48, 56, 73), DisplayPreset.entries.map { it.homeRowHeightDp })
+        assertEquals(listOf(400, 500, 500), DisplayPreset.entries.map { it.fontWeight })
         assertEquals(DisplayPreset.COMFORTABLE, DisplayPreset.DEFAULT)
+    }
+
+    @Test
+    fun `large preset shares the comfortable type weight`() {
+        assertEquals(DisplayPreset.COMFORTABLE.fontWeight, DisplayPreset.LARGE.fontWeight)
+    }
+
+    @Test
+    fun `compact and comfortable keep the base spacing`() {
+        listOf(DisplayPreset.COMPACT, DisplayPreset.COMFORTABLE).forEach { preset ->
+            assertEquals(4, preset.homeRowSpacingDp)
+            assertEquals(8, preset.homeColumnSpacingDp)
+            assertEquals(12, preset.homeIconLabelSpacingDp)
+            assertEquals(12, preset.homeRowPaddingDp)
+        }
+    }
+
+    @Test
+    fun `large spacing scales with its type size`() {
+        assertEquals(5, DisplayPreset.LARGE.homeRowSpacingDp)
+        assertEquals(10, DisplayPreset.LARGE.homeColumnSpacingDp)
+        assertEquals(16, DisplayPreset.LARGE.homeIconLabelSpacingDp)
+        assertEquals(16, DisplayPreset.LARGE.homeRowPaddingDp)
     }
 
     @Test

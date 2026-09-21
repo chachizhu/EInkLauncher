@@ -20,7 +20,7 @@
     <string name="selected_apps">Selected</string>
     <string name="selected_apps_hint">Tap an app name to set a shorter home label.</string>
     <string name="home_display_preset">Home display</string>
-    <string name="home_display_preset_summary">Selected: %1$s · %2$d sp. Row height and weight are optimized together.</string>
+    <string name="home_display_preset_summary">Selected: %1$s · %2$d sp. Row height, weight and gaps are optimized together.</string>
     <string name="home_display_legacy_summary">Current custom size: %1$d sp. It is preserved until you choose a preset.</string>
     <string name="display_preset_compact">Compact</string>
     <string name="display_preset_comfortable">Comfort</string>

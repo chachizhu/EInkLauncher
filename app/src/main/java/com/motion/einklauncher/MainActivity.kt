@@ -17,6 +17,9 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
@@ -101,6 +104,10 @@ class MainActivity : Activity() {
     private var currentCharging = false
     private var currentWifi: WifiIndicator = WifiIndicator.HIDDEN
     private var statusReceiverRegistered = false
+    private var wifiCallbackRegistered = false
+
+    /** Wi-Fi networks that currently carry a validated connection; touched on the UI thread only. */
+    private val connectedWifiNetworks = mutableSetOf<Network>()
 
     private val interSemiBold: Typeface by lazy { assetTypeface(INTER_SEMI_BOLD_ASSET_PATH) }
 
@@ -122,10 +129,40 @@ class MainActivity : Activity() {
                 Intent.ACTION_TIMEZONE_CHANGED,
                 Intent.ACTION_DATE_CHANGED,
                 -> updateClock()
-                WifiManager.WIFI_STATE_CHANGED_ACTION,
-                WifiManager.NETWORK_STATE_CHANGED_ACTION,
-                -> updateWifiState()
+                WifiManager.WIFI_STATE_CHANGED_ACTION -> updateWifiState()
             }
+        }
+    }
+
+    /**
+     * Wi-Fi connection changes arrive here rather than through NETWORK_STATE_CHANGED_ACTION.
+     *
+     * That broadcast is sent by the Wi-Fi state machine about a millisecond *before*
+     * ConnectivityService commits the same transition, so re-querying at receive time still
+     * returned CONNECTING and the indicator stuck at DIM. Nothing re-broadcast once the
+     * connection settled, so it stayed stuck until the activity next restarted. Connectivity
+     * callbacks fire after the state is committed, and they also fire when validation completes,
+     * which never produced a broadcast at all.
+     */
+    private val wifiNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onLost(network: Network) = onWifiNetworkChanged(network, connected = false)
+
+        override fun onCapabilitiesChanged(
+            network: Network,
+            networkCapabilities: NetworkCapabilities,
+        ) {
+            onWifiNetworkChanged(
+                network = network,
+                connected = WifiIndicatorPolicy.isConnected(
+                    hasWifiTransport = networkCapabilities.hasTransport(
+                        NetworkCapabilities.TRANSPORT_WIFI,
+                    ),
+                    validated = networkCapabilities.hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_VALIDATED,
+                    ),
+                    validationSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M,
+                ),
+            )
         }
     }
 
@@ -137,6 +174,10 @@ class MainActivity : Activity() {
         updateVerifier = UpdatePackageVerifier(this)
         updateInstaller = SystemUpdateInstaller(this)
         iconCache = AppIconCache(this)
+        // Registered for the process lifetime, not for each onStart: the tracked set stays valid
+        // across activity restarts, so returning to the home screen never has to guess a state
+        // that a fresh query would have to re-derive.
+        registerWifiNetworkCallback()
         installedVersionName = try {
             updateVerifier.currentVersionName()
         } catch (_: UpdateException) {
@@ -219,6 +260,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        unregisterWifiNetworkCallback()
         cancelActiveUpdateTask(restoreIdleState = false)
         renameDialog?.dismiss()
         renameDialog = null
@@ -375,7 +417,7 @@ class MainActivity : Activity() {
             HomeGridPolicy.contentMaxWidthDp(
                 columns = preferences.homeGridColumns(),
                 columnWidthDp = HOME_MAX_COLUMN_WIDTH_DP,
-                columnSpacingDp = HOME_COLUMN_SPACING_DP,
+                columnSpacingDp = DisplayPreset.BASE_COLUMN_SPACING_DP,
             ),
         )
         root.addView(
@@ -442,7 +484,7 @@ class MainActivity : Activity() {
         val rowHeightPx = maxOf(
             dp(preset.homeRowHeightDp),
             scaledTextHeightPx,
-        ) + dp(HOME_ROW_SPACING_DP)
+        ) + dp(preset.homeRowSpacingDp)
         val page = SelectionPolicy.page(homeApps, homePage, rows * columns)
         homePage = page.pageIndex
         homePageCount = page.pageCount
@@ -450,7 +492,7 @@ class MainActivity : Activity() {
         container.minimumHeight = if (homeApps.isEmpty()) {
             0
         } else {
-            (rows * rowHeightPx - dp(HOME_ROW_SPACING_DP)).coerceAtLeast(0)
+            (rows * rowHeightPx - dp(preset.homeRowSpacingDp)).coerceAtLeast(0)
         }
 
         var firstHomeAppView: View? = null
@@ -470,14 +512,14 @@ class MainActivity : Activity() {
             )
         } else {
             page.items.chunked(columns).forEachIndexed { rowIndex, rowApps ->
-                if (rowIndex > 0) container.addView(verticalSpace(HOME_ROW_SPACING_DP))
+                if (rowIndex > 0) container.addView(verticalSpace(preset.homeRowSpacingDp))
                 val gridRow = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
                 }
                 rowApps.forEachIndexed { columnIndex, app ->
                     if (columnIndex > 0) {
-                        gridRow.addView(horizontalSpace(HOME_COLUMN_SPACING_DP))
+                        gridRow.addView(horizontalSpace(preset.homeColumnSpacingDp))
                     }
                     val appView = homeAppButton(app, preset, homeTextSizeSp)
                     if (firstHomeAppView == null) firstHomeAppView = appView
@@ -491,7 +533,7 @@ class MainActivity : Activity() {
                 // horizontal LinearLayout receives an AT_MOST height spec and getDefaultSize
                 // expands it to the full spec size, inflating the row.
                 repeat(columns - rowApps.size) {
-                    gridRow.addView(horizontalSpace(HOME_COLUMN_SPACING_DP))
+                    gridRow.addView(horizontalSpace(preset.homeColumnSpacingDp))
                     gridRow.addView(
                         View(this),
                         LinearLayout.LayoutParams(0, 0, 1f),
@@ -1560,7 +1602,7 @@ class MainActivity : Activity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), 0, dp(12), 0)
+            setPadding(dp(preset.homeRowPaddingDp), 0, dp(preset.homeRowPaddingDp), 0)
             minimumHeight = dp(preset.homeRowHeightDp)
             isClickable = true
             isFocusable = true
@@ -1595,7 +1637,7 @@ class MainActivity : Activity() {
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 },
                 LinearLayout.LayoutParams(iconSizePx, iconSizePx).apply {
-                    marginEnd = dp(HOME_ICON_LABEL_SPACING_DP)
+                    marginEnd = dp(preset.homeIconLabelSpacingDp)
                 },
             )
         }
@@ -1862,7 +1904,6 @@ class MainActivity : Activity() {
             addAction(Intent.ACTION_DATE_CHANGED)
             addAction(Intent.ACTION_BATTERY_CHANGED)
             addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
-            addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
         }
         val stickyBattery = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -1914,15 +1955,60 @@ class MainActivity : Activity() {
 
     private fun updateWifiState() {
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        val connectivity =
-            applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        @Suppress("DEPRECATION")
-        val connected =
-            connectivity.getNetworkInfo(ConnectivityManager.TYPE_WIFI)?.isConnected == true
-        val next = WifiIndicatorPolicy.resolve(wifiManager.isWifiEnabled, connected)
+        val next = WifiIndicatorPolicy.resolve(
+            wifiEnabled = wifiManager.isWifiEnabled,
+            connected = connectedWifiNetworks.isNotEmpty(),
+        )
         if (next == currentWifi) return
         currentWifi = next
         updateStatusViews()
+    }
+
+    /**
+     * Callbacks arrive on a binder thread, so the tracked set and the status views are only ever
+     * touched on the UI thread. Capabilities are taken from the callback instead of being
+     * re-queried: re-querying is precisely what left the old broadcast path reading stale state.
+     */
+    private fun onWifiNetworkChanged(network: Network, connected: Boolean) {
+        runOnUiThread {
+            if (!wifiCallbackRegistered) return@runOnUiThread
+            if (connected) {
+                connectedWifiNetworks.add(network)
+            } else {
+                connectedWifiNetworks.remove(network)
+            }
+            updateWifiState()
+        }
+    }
+
+    private fun registerWifiNetworkCallback() {
+        if (wifiCallbackRegistered) return
+        val connectivity =
+            applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+        try {
+            connectivity.registerNetworkCallback(request, wifiNetworkCallback)
+            wifiCallbackRegistered = true
+        } catch (_: RuntimeException) {
+            // Registration throws when the process already holds too many callbacks. The Wi-Fi
+            // radio broadcast still drives the indicator; losing it must not take down the home
+            // screen, which is the user's only way back to their apps.
+        }
+    }
+
+    private fun unregisterWifiNetworkCallback() {
+        if (!wifiCallbackRegistered) return
+        wifiCallbackRegistered = false
+        connectedWifiNetworks.clear()
+        val connectivity =
+            applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        try {
+            connectivity.unregisterNetworkCallback(wifiNetworkCallback)
+        } catch (_: RuntimeException) {
+            // Already gone; nothing left to release.
+        }
     }
 
     private fun updateStatusViews() {
@@ -2214,15 +2300,12 @@ class MainActivity : Activity() {
 
         const val HOME_SIDE_MARGIN_DP = 40
         const val HOME_MAX_COLUMN_WIDTH_DP = 420
-        const val HOME_ROW_SPACING_DP = 4
-        const val HOME_COLUMN_SPACING_DP = 8
         const val HOME_GRID_VALUE_WIDTH_DP = 40
         const val HOME_CONTENT_TOP_RESERVE_DP = 64
         const val HOME_CONTENT_BOTTOM_RESERVE_DP = 72
         const val HOME_PAGER_TOP_SPACING_DP = 8
         const val HOME_MANAGEMENT_BUTTON_SIZE_DP = 48
         const val HOME_MANAGEMENT_BUTTON_MARGIN_DP = 20
-        const val HOME_ICON_LABEL_SPACING_DP = 12
         const val HOME_ICON_TEXT_SCALE = 1.3f
         const val HOME_ICON_ROW_PADDING_DP = 16
         const val HOME_ICON_MIN_DP = 20

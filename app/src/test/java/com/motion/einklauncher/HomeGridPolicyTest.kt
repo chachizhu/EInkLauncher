@@ -12,20 +12,22 @@ class HomeGridPolicyTest {
     }
 
     @Test
-    fun `bounds allow eight to ten rows and one to two columns`() {
-        assertEquals(8, HomeGridPolicy.MIN_ROWS)
-        assertEquals(10, HomeGridPolicy.MAX_ROWS)
+    fun `bounds allow four to sixteen rows and one to two columns`() {
+        assertEquals(4, HomeGridPolicy.MIN_ROWS)
+        assertEquals(16, HomeGridPolicy.MAX_ROWS)
         assertEquals(1, HomeGridPolicy.MIN_COLUMNS)
         assertEquals(2, HomeGridPolicy.MAX_COLUMNS)
     }
 
     @Test
     fun `normalize clamps out of range values into the supported bounds`() {
-        assertEquals(8, HomeGridPolicy.normalizeRows(0))
+        assertEquals(4, HomeGridPolicy.normalizeRows(0))
+        assertEquals(4, HomeGridPolicy.normalizeRows(4))
         assertEquals(8, HomeGridPolicy.normalizeRows(8))
         assertEquals(9, HomeGridPolicy.normalizeRows(9))
         assertEquals(10, HomeGridPolicy.normalizeRows(10))
-        assertEquals(10, HomeGridPolicy.normalizeRows(99))
+        assertEquals(16, HomeGridPolicy.normalizeRows(16))
+        assertEquals(16, HomeGridPolicy.normalizeRows(99))
 
         assertEquals(1, HomeGridPolicy.normalizeColumns(-3))
         assertEquals(1, HomeGridPolicy.normalizeColumns(1))
@@ -39,7 +41,8 @@ class HomeGridPolicyTest {
         assertEquals(16, HomeGridPolicy.capacity(8, 2))
         assertEquals(18, HomeGridPolicy.capacity(9, 2))
         assertEquals(20, HomeGridPolicy.capacity(10, 2))
-        assertEquals(10, HomeGridPolicy.capacity(99, 0))
+        assertEquals(32, HomeGridPolicy.capacity(16, 2))
+        assertEquals(16, HomeGridPolicy.capacity(99, 0))
     }
 
     @Test
